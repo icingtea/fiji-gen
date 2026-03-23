@@ -9,18 +9,19 @@ template <typename T> struct Individual {
 };
 
 template <typename T> struct Pairing {
-    Individual<T>& parent_1;
-    Individual<T>& parent_2;
+    size_t parent_1_index;
+    size_t parent_2_index;
 };
 
 template <typename T> class GA {
   public:
     using genome_type = T;
 
-    const unsigned init_pop_size;
-    const double mut_rate;
-    const unsigned rng_seed;
-    unsigned pop_size;
+    size_t init_pop_size;
+    double mut_rate;
+    double selection_rate;
+    size_t rng_seed;
+    size_t pop_size;
 
     int generation = 0;
 
@@ -33,6 +34,7 @@ template <typename T> class GA {
     virtual void init_population() = 0;
     virtual double compute_fitness(Individual<T>& individual) = 0;
     virtual std::vector<Pairing<T>> select_parents(
+        double selection_rate,
         std::vector<Individual<T>>& population) = 0;
     virtual Individual<T> crossover(Pairing<T>& pair) = 0;
     virtual void mutate(Individual<T>& individual) = 0;

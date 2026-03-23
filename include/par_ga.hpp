@@ -10,7 +10,7 @@
 #include <vector>
 
 template <typename GAType>
-concept IsGA = requires(GAType ga) {
+concept IsGA = requires(GAType& ga) {
     typename GAType::genome_type;
     { ga.step() };
     { ga.init_population() };
@@ -27,10 +27,10 @@ template <IsGA GAType> struct migrant_buffer {
 
 template <IsGA GAType> class Island {
   public:
-    unsigned id;
-    unsigned n_migrants;
-    unsigned quorum;
-    std::atomic<unsigned>& done_counter;
+    size_t id;
+    size_t n_migrants;
+    size_t quorum;
+    std::atomic<size_t>& done_counter;
     GAType ga;
     std::mt19937 rng;
     std::uniform_real_distribution<double> dist;
