@@ -1,153 +1,194 @@
 #pragma once
-#include <thread>
-#include <vector>
-#include <barrier>
+#include "ga.hpp"
 #include <atomic>
 #include <cassert>
 #include <concepts>
-#include <functional>
-#include "ga.hpp"
+#include <memory>
+#include <vector>
+#include <thread>
+#include <random>
 
 template <typename GAType>
 concept IsGA = requires(GAType ga) {
-  typename GAType::genome_type;
-  { ga.step() };
-  { ga.init_population() };
-  { ga.population() };
-  { ga.check_halt(ga.population()) } -> std::convertible_to<bool>;
-  { ga.generation };
+	typename GAType::genome_type;
+	{ ga.step() };
+	{ ga.init_population() };
+	{ ga.population() };
+	{ ga.check_halt(ga.population()) } -> std::convertible_to<bool>;
+	{ ga.generation };
 };
 
-template <IsGA GAType>
-class Island {
-  public:
-    explicit Island(
-      GAType&& ga,
-      unsigned migration_interval,
-      std::barrier<std::function<void()>>& barrier,
-      std::atomic<bool>& global_done
-    )
-      : ga(std::move(ga)),
-        migration_interval(migration_interval),
-        barrier_(barrier),
-        global_done_(global_done)
-    {}
-
-    void island_run() {
-      try {
-        while (true) {
-          island_step();
-
-          if (ga.check_halt(ga.population())) {
-            global_done_.store(true, std::memory_order_relaxed);
-          }
-
-          barrier_.arrive_and_wait();
-
-          if (global_done_.load(std::memory_order_relaxed)) break;
-        }
-      } catch (...) {
-        global_done_.store(true, std::memory_order_relaxed);
-        barrier_.arrive_and_wait();
-      }
-    }
-
-    GAType ga;
-
-  private:
-    unsigned migration_interval;
-    std::barrier<std::function<void()>>& barrier_;
-    std::atomic<bool>& global_done_;
-
-    void island_step() {
-      ga.step();
-
-      if (ga.generation > 0 &&
-          ga.generation % migration_interval == 0) {
-        barrier_.arrive_and_wait();
-      }
-    }
+template <IsGA GAType> struct migrant_buffer {
+	using T = typename GAType::genome_type;
+	std::vector<Individual<T>> buffer;
+	std::atomic<bool> full{false};
 };
 
-template <IsGA GAType>
-class IslandModel {
+template <IsGA GAType> class Island {
   public:
-    unsigned n_threads;
-    unsigned migration_interval;
-    unsigned n_migrants;
+	unsigned id;
+	unsigned n_migrants;
+	unsigned quorum;
+	std::atomic<unsigned>& done_counter;
+	GAType ga;
+	std::mt19937 rng;
+	std::uniform_real_distribution<double> dist;
 
-    explicit IslandModel(
-      unsigned n_threads,
-      unsigned migration_interval,
-      unsigned n_migrants,
-      unsigned pop_size,
-      double mut_rate,
-      unsigned rng_seed
-    )
-      : n_threads(n_threads),
-        migration_interval(migration_interval),
-        n_migrants(n_migrants),
-        barrier_(n_threads, [this]() { migrate(); })
-    {
-      for (unsigned i = 0; i < n_threads; i++) {
-        GAType ga(pop_size, mut_rate, rng_seed + i * 1337);
-        ga.init_population();
+	explicit Island(
+		GAType&& ga, 
+		double migration_probability,
+		unsigned island_id,
+		unsigned n_migrants,
+		unsigned quorum,
+		std::atomic<unsigned>& done_counter,
+		std::vector<std::unique_ptr<migrant_buffer<GAType>>>& migrant_buffers,
+		unsigned rng_seed
+	) : 
+		ga(std::move(ga)), 
+		migration_probability(migration_probability), 
+		id(island_id), 
+		n_migrants(n_migrants),
+		migrant_buffers_(migrant_buffers), 
+		self_migrant_buffer_ (*migrant_buffers_[id]), 
+		quorum(quorum),
+		done_counter(done_counter),
+		neighbor_migrant_buffer_(*migrant_buffers_[(id + 1) % migrant_buffers_.size()]), 
+		rng(rng_seed),
+		dist(0.0, 1.0)
+	{}
 
-        islands_.emplace_back(
-          std::move(ga),
-          migration_interval,
-          barrier_,
-          global_done_
-        );
-      }
-    }
+	void island_run() {
+		bool counted = false;
+		while (true) {
+			island_step(!counted);
+			
+			if(!counted && ga.check_halt(ga.population())) {
+				unsigned expected_done = done_counter.load(std::memory_order_relaxed);
+				while (expected_done < quorum) { 
+					if (done_counter.compare_exchange_weak(
+						expected_done, expected_done + 1, std::memory_order_acq_rel, std::memory_order_relaxed
+					)) { counted = true; break; }
+				}
+			}
 
-    void island_model_run() {
-      std::vector<std::thread> threads;
-
-      for (unsigned i = 0; i < n_threads; i++) {
-        threads.emplace_back(&Island<GAType>::island_run, &islands_[i]);
-      }
-
-      for (auto& t : threads) {
-        t.join();
-      }
-    }
+			if (done_counter.load(std::memory_order_relaxed) >= quorum) { break; }
+		}
+	}
 
   private:
-    using T = typename GAType::genome_type;
+	double migration_probability;
+	std::vector<std::unique_ptr<migrant_buffer<GAType>>>& migrant_buffers_;
+	migrant_buffer<GAType>& self_migrant_buffer_;
+	migrant_buffer<GAType>& neighbor_migrant_buffer_;
 
-    std::vector<Island<GAType>> islands_;
-    std::barrier<std::function<void()>> barrier_;
-    std::atomic<bool> global_done_ = false;
+	void island_step(bool active) { receive_migrants(); if (active) { ga.step(); send_migrants(); }};
 
-    void migrate() {
-      std::vector<std::vector<Individual<T>>> migrants(n_threads);
+	void send_migrants() {
+		if (dist(rng) < migration_probability && !neighbor_migrant_buffer_.full.load(std::memory_order_acquire)) {
+			neighbor_migrant_buffer_.buffer.clear();
 
-      for (unsigned i = 0; i < n_threads; i++) {
-        auto& src = islands_[i].ga.population();
+			unsigned round_n_migrants = (ga.pop_size > 1) ? std::min(n_migrants, ga.pop_size - 1) : 0;
+			if (round_n_migrants == 0) return;
 
-        assert(src.size() >= n_migrants);
+			ga.partition_by_fitness(round_n_migrants);
+			auto& population = ga.population();
 
-        islands_[i].ga.partition_by_fitness(n_migrants);
+			for(unsigned i = 0; i < round_n_migrants; i++) {
+				neighbor_migrant_buffer_.buffer.push_back(std::move(population[i]));
+			}
 
-        migrants[i].insert(
-          migrants[i].end(),
-          std::make_move_iterator(src.begin()),
-          std::make_move_iterator(src.begin() + n_migrants)
-        );
+			population.erase(population.begin(), population.begin() + round_n_migrants);
+			neighbor_migrant_buffer_.full.store(true, std::memory_order_release);
+		}
+	}
 
-        src.erase(src.begin(), src.begin() + n_migrants);
-      }
+	void receive_migrants() {
+		if (self_migrant_buffer_.full.load(std::memory_order_acquire)) {
+			auto& population = ga.population();
+			auto& buf = self_migrant_buffer_.buffer;
 
-      for (unsigned i = 0; i < n_threads; i++) {
-        auto& dst = islands_[(i + 1) % n_threads].ga.population();
+			for(auto& individual : buf) {
+				population.push_back(std::move(individual));
+			}
 
-        dst.insert(
-          dst.end(),
-          std::make_move_iterator(migrants[i].begin()),
-          std::make_move_iterator(migrants[i].end())
-        );
-      }
-    }
+			buf.clear();
+			self_migrant_buffer_.full.store(false, std::memory_order_release);
+		}
+	};
+};
+
+template <IsGA GAType> class IslandModel {
+  public:
+  	using T = typename GAType::genome_type;
+
+	unsigned n_threads;
+	double migration_probability;
+	unsigned n_migrants;
+	std::atomic<unsigned> done_counter{0};
+	std::vector<std::unique_ptr<migrant_buffer<GAType>>> migrant_buffers;
+
+	explicit IslandModel(
+		unsigned n_threads, 
+		double migration_probability,
+		unsigned n_migrants, 
+		unsigned pop_size,
+		double mut_rate, 
+		unsigned quorum,
+		std::vector<unsigned> rng_seeds
+	) : 
+		n_threads(n_threads), 
+		migration_probability(migration_probability),
+		n_migrants(n_migrants) {
+
+		migrant_buffers.reserve(n_threads);
+		for (unsigned i = 0; i < n_threads; i++) {
+    		migrant_buffers.push_back(std::make_unique<migrant_buffer<GAType>>());
+		}
+
+		assert(rng_seeds.size() == n_threads);
+		for (unsigned i = 0; i < n_threads; i++) {
+			GAType ga(pop_size, mut_rate, rng_seeds[i]);
+			ga.init_population();
+
+			islands_.emplace_back(
+				std::move(ga), 
+				migration_probability, 
+				i, 
+				n_migrants, 
+				quorum, 
+				done_counter, 
+				migrant_buffers, 
+				rng_seeds[i]
+			);
+		}
+	}
+
+	bool island_model_run() {
+		try {
+			std::vector<std::thread> threads;
+
+			for (unsigned i = 0; i < n_threads; i++) {
+				threads.emplace_back(&Island<GAType>::island_run, &islands_[i]);
+			}
+
+			for (auto& t : threads) {
+				t.join();
+			}
+		} catch(...) {
+			return false;
+		}
+		return true;
+	}
+
+	std::vector<std::vector<Individual<T>>> populations() {
+		std::vector<std::vector<Individual<T>>> populations;
+		for(Island<GAType>& island : islands_) {
+			populations.push_back(island.ga.population());
+		}
+
+		return populations;
+ 	}
+
+  private:
+	std::vector<Island<GAType>> islands_;
 };
