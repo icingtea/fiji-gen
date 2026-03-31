@@ -1,2 +1,0 @@
-/home/jia/Desktop/progaming/fiji-gen/build/CMakeFiles/edit_cache.dir
-/home/jia/Desktop/progaming/fiji-gen/build/CMakeFiles/rebuild_cache.dir
