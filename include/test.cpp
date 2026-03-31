@@ -1,12 +1,12 @@
+#include "par_ga.hpp"
+#include <algorithm>
 #include <iostream>
 #include <random>
-#include <algorithm>
-#include "par_ga.hpp"
 
 // -------------------- Dummy GA --------------------
 
 class DummyGA : public GA<double> {
-public:
+  public:
     std::mt19937 rng;
     std::uniform_real_distribution<double> dist{-100.0, 100.0};
 
@@ -54,17 +54,19 @@ public:
         ind.genome += noise(rng);
     }
 
-    void drop_individuals(std::vector<Individual<double>>& population) override {
+    void drop_individuals(
+        std::vector<Individual<double>>& population) override {
         // keep top half
         std::sort(population.begin(), population.end(),
-            [](auto& a, auto& b) { return a.fitness > b.fitness; });
+                  [](auto& a, auto& b) { return a.fitness > b.fitness; });
 
         population.resize(init_pop_size);
     }
 
     bool check_halt(std::vector<Individual<double>>& population) override {
         // stop if close to 42
-        auto best = std::max_element(population.begin(), population.end(),
+        auto best = std::max_element(
+            population.begin(), population.end(),
             [](auto& a, auto& b) { return a.fitness < b.fitness; });
 
         return best->fitness > -1e-3; // near optimal
@@ -86,15 +88,8 @@ int main() {
         seeds.push_back(1234 + i * 1337);
     }
 
-    IslandModel<DummyGA> model(
-        n_threads,
-        migration_probability,
-        n_migrants,
-        pop_size,
-        mut_rate,
-        quorum,
-        seeds
-    );
+    IslandModel<DummyGA> model(n_threads, migration_probability, n_migrants,
+                               pop_size, mut_rate, quorum, seeds);
 
     std::cout << "Running island model...\n";
 
@@ -107,12 +102,13 @@ int main() {
     for (unsigned i = 0; i < populations.size(); i++) {
         auto& pop = populations[i];
 
-        auto best = std::max_element(pop.begin(), pop.end(),
-            [](auto& a, auto& b) { return a.fitness < b.fitness; });
+        auto best =
+            std::max_element(pop.begin(), pop.end(), [](auto& a, auto& b) {
+                return a.fitness < b.fitness;
+            });
 
-        std::cout << "Island " << i << " best: "
-                  << best->genome << " (fitness: "
-                  << best->fitness << ")\n";
+        std::cout << "Island " << i << " best: " << best->genome
+                  << " (fitness: " << best->fitness << ")\n";
     }
 
     return 0;
