@@ -74,7 +74,6 @@ class DummyGA : public GA<double> {
 };
 
 // -------------------- Main --------------------
-
 int main() {
     unsigned n_threads = 4;
     unsigned pop_size = 50;
