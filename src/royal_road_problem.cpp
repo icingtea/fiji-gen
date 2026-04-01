@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <iostream>
 #include <random>
+#include <string>
 #include <vector>
 
 class RoyalRoadGA : public GA<unsigned> {
@@ -26,11 +27,6 @@ class RoyalRoadGA : public GA<unsigned> {
 
             // Random genome
             ind.genome = bit_dist(rng);
-
-            // Mask unused bits if genome_length < 32
-            if (genome_length < 32) {
-                ind.genome &= ((1u << genome_length) - 1);
-            }
 
             ind.fitness = compute_fitness(ind);
             population_.push_back(ind);
@@ -186,7 +182,26 @@ int main_par() {
     return 0;
 }
 
-int main() {
-    // main_seq();
-    main_par();
+int main(int argc, char* argv[]) {
+
+    // Check if argument is provided
+    if (argc < 2) {
+        std::cout << "Usage: " << argv[0] << " [seq|par]\n";
+        return 1;
+    }
+
+    // Convert argument to std::string
+    std::string mode = argv[1];
+
+    // Select execution mode
+    if (mode == "seq") {
+        main_seq();
+    } else if (mode == "par") {
+        main_par();
+    } else {
+        std::cout << "Invalid argument. Use 'seq' or 'par'.\n";
+        return 1;
+    }
+
+    return 0;
 }
