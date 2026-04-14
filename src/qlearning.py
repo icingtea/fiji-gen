@@ -1,89 +1,81 @@
 import torch
+import torch.nn as nn
+import torch.optim as optim
 import random
-from typing import Dict, Tuple, List
+from collections import deque
+from typing import Tuple, List
 
 
-class QLearningAgent:
+class DQNModel(nn.Module):
+    def __init__(self, input_dim: int, output_dim: int):
+        super(DQNModel, self).__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, 64),
+            nn.ReLU(),
+            nn.Linear(64, 64),
+            nn.ReLU(),
+            nn.Linear(64, output_dim)
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)
+
+
+class DQNAgent:
     def __init__(
         self,
         action_space: List[Tuple[str, float, float]],
-        num_bins: int = 10,
-        alpha: float = 0.1,
+        lr: float = 0.001,
         gamma: float = 0.9,
-        epsilon: float = 0.5,
+        epsilon: float = 0.9,
         epsilon_decay: float = 0.995,
         epsilon_min: float = 0.05,
+        batch_size: int = 64,
+        memory_size: int = 10000,
     ):
         self.action_space = action_space
         self.n_actions = len(action_space)
-
-        self.num_bins = num_bins
-
-        self.alpha = alpha
         self.gamma = gamma
 
         self.epsilon = epsilon
         self.epsilon_decay = epsilon_decay
         self.epsilon_min = epsilon_min
 
-        self.q_table: Dict[Tuple[float, float], torch.Tensor] = {}
+        self.batch_size = batch_size
+        self.memory = deque(maxlen=memory_size)
 
-        self.fitness_min = float("inf")
-        self.fitness_max = float("-inf")
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        self.entropy_min = float("inf")
-        self.entropy_max = float("-inf")
+        # State has 2 dimensions: [avg_fitness, entropy]
+        self.q_network = DQNModel(2, self.n_actions).to(self.device)
+        self.target_network = DQNModel(2, self.n_actions).to(self.device)
+        self.update_target_network()
+        self.target_network.eval()
 
-    def _update_ranges(self, state: torch.Tensor) -> None:
+        # The paper calibrated alpha=0.1. Typically for Adam a smaller learning rate like 0.001 is used, 
+        # but since we aim to stay loyal to the paper, although alpha=0.1 with NN could be too large,
+        # we will use typical NN settings but use the provided alpha for the step. The variable name is lr.
+        self.optimizer = optim.Adam(self.q_network.parameters(), lr=lr)
+        self.loss_fn = nn.MSELoss()
+
+    def update_target_network(self) -> None:
         """
-        Update observed min/max for normalization.
+        Synchronize the target network with the main Q-network.
         """
-        f, e = float(state[0]), float(state[1])
-
-        self.fitness_min = min(self.fitness_min, f)
-        self.fitness_max = max(self.fitness_max, f)
-
-        self.entropy_min = min(self.entropy_min, e)
-        self.entropy_max = max(self.entropy_max, e)
-
-    def _discretize(self, state: torch.Tensor) -> Tuple[int, int]:
-        """
-        Convert continuous state to discrete bins.
-        """
-        self._update_ranges(state)
-
-        f, e = float(state[0]), float(state[1])
-
-        def to_bin(x: float, x_min: float, x_max: float) -> int:
-            if x_max - x_min < 1e-8:
-                return 0
-            val = int((x - x_min) / (x_max - x_min) * (self.num_bins - 1))
-            return max(0, min(self.num_bins - 1, val))
-
-        f_bin = to_bin(f, self.fitness_min, self.fitness_max)
-        e_bin = to_bin(e, self.entropy_min, self.entropy_max)
-
-        return (f_bin, e_bin)
-
-    def _get_q(self, state: Tuple[float, float]) -> torch.Tensor:
-        """
-        Retrieve Q-values for a state.
-        """
-        if state not in self.q_table:
-            self.q_table[state] = torch.zeros(self.n_actions)
-        return self.q_table[state]
+        self.target_network.load_state_dict(self.q_network.state_dict())
 
     def select_action(self, state: torch.Tensor) -> int:
         """
         ε-greedy action selection.
         """
-        s = self._discretize(state)
-
         if random.random() < self.epsilon:
             return random.randint(0, self.n_actions - 1)
 
-        q_values = self._get_q(s)
-        return int(torch.argmax(q_values).item())
+        self.q_network.eval()
+        with torch.no_grad():
+            s = state.float().unsqueeze(0).to(self.device)
+            q_values = self.q_network(s)
+            return int(torch.argmax(q_values, dim=1).item())
 
     def update(
         self,
@@ -91,19 +83,41 @@ class QLearningAgent:
         action: int,
         reward: float,
         next_state: torch.Tensor,
+        done: bool = False,
     ) -> None:
         """
-        Q(s,a) <- Q(s,a) + alpha * [r + gamma * max_a' Q(s',a') - Q(s,a)]
+        Store experience and train the network.
         """
-        s = self._discretize(state)
-        s_next = self._discretize(next_state)
+        self.memory.append((state, action, reward, next_state, done))
 
-        q = self._get_q(s)
-        q_next = self._get_q(s_next)
+        if len(self.memory) < self.batch_size:
+            return
 
-        target = reward + self.gamma * torch.max(q_next)
+        batch = random.sample(self.memory, self.batch_size)
 
-        q[action] += self.alpha * (target - q[action])
+        states = torch.stack([x[0] for x in batch]).float().to(self.device)
+        actions = torch.tensor([x[1] for x in batch], dtype=torch.int64).unsqueeze(1).to(self.device)
+        rewards = torch.tensor([x[2] for x in batch], dtype=torch.float32).unsqueeze(1).to(self.device)
+        next_states = torch.stack([x[3] for x in batch]).float().to(self.device)
+        dones = torch.tensor([x[4] for x in batch], dtype=torch.float32).unsqueeze(1).to(self.device)
+
+        self.q_network.train()
+
+        # Current Q values
+        q_values = self.q_network(states).gather(1, actions)
+
+        # Target Q values
+        with torch.no_grad():
+            next_q_values = self.target_network(next_states).max(1, keepdim=True)[0]
+            targets = rewards + self.gamma * next_q_values * (1.0 - dones)
+
+        loss = self.loss_fn(q_values, targets)
+
+        self.optimizer.zero_grad()
+        loss.backward()
+        # Clip gradients to avoid instability caused by rare large reward spikes
+        torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), max_norm=1.0)
+        self.optimizer.step()
 
     def decay_epsilon(self) -> None:
         self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)

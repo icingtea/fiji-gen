@@ -1,9 +1,9 @@
 import torch
 from typing import List, Tuple
 
-from env import FSPEnvironment
-from qlearning import QLearningAgent
-from utils import plot_training, generate_instance
+from env import RoyalRoadEnvironment
+from qlearning import DQNAgent
+from utils import plot_training
 
 
 selection_methods: List[str] = ["elitism", "roulette", "rank"]
@@ -16,22 +16,23 @@ action_space: List[Tuple[str, float, float]] = [
 
 
 def train() -> None:
-    processing_times: torch.Tensor = generate_instance(10, 5)
-
-    env = FSPEnvironment(processing_times)
-    agent = QLearningAgent(action_space)
+    env = RoyalRoadEnvironment()
+    # epsilon_decay=0.97 reaches ~0.05 in ~100 episodes; target_update_freq syncs target
+    # network every N steps within an episode for more stable bootstrapping.
+    agent = DQNAgent(action_space, epsilon_decay=0.97)
 
     rewards_log: List[float] = []
     best_log: List[float] = []
 
     episodes: int = 100
     generations: int = 50
+    target_update_freq: int = 10  # sync target net every N steps within an episode
 
     for ep in range(episodes):
         state: torch.Tensor = env.reset()
         total_reward: float = 0.0
 
-        for _ in range(generations):
+        for step in range(generations):
             # Select discrete action index
             action_idx: int = agent.select_action(state)
 
@@ -40,16 +41,23 @@ def train() -> None:
 
             next_state, reward = env.step(action)
 
-            # Q-learning update
+            # DQN update
             agent.update(state, action_idx, reward, next_state)
+
+            # Sync target network periodically within the episode
+            if (step + 1) % target_update_freq == 0:
+                agent.update_target_network()
 
             state = next_state
             total_reward += reward
 
-        # Decay exploration
+        # Decay exploration after each episode
         agent.decay_epsilon()
+        
+        # Final target sync at episode boundary
+        agent.update_target_network()
 
-        best = float(env.fitness.min())
+        best = float(env.fitness.max())
 
         rewards_log.append(total_reward)
         best_log.append(best)

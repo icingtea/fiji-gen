@@ -10,21 +10,18 @@ from ga import (
 )
 
 
-class FSPEnvironment:
-    __slots__ = ("processing_times", "population_size", "population", "fitness")
+class RoyalRoadEnvironment:
+    __slots__ = ("population_size", "population", "fitness")
 
-    def __init__(self, processing_times: torch.Tensor, population_size: int = 50):
-        self.processing_times = processing_times
+    def __init__(self, population_size: int = 50):
         self.population_size = population_size
 
         self.population: List[torch.Tensor] = []
         self.fitness: torch.Tensor = torch.Tensor([])
 
     def reset(self) -> torch.Tensor:
-        self.population = initialize_population(
-            self.population_size, self.processing_times.size(0)
-        )
-        self.fitness = evaluate_population(self.population, self.processing_times)
+        self.population = initialize_population(self.population_size)
+        self.fitness = evaluate_population(self.population)
         return self._get_state()
 
     def step(self, action: Tuple[str, float, float]) -> Tuple[torch.Tensor, float]:
@@ -44,32 +41,31 @@ class FSPEnvironment:
 
         for parent_1, parent_2 in zip(parents[::2], parents[1::2]):
             child_1, child_2 = crossover(parent_1, parent_2)
-            child_1, child_2 = crossover(parent_1, parent_2)
 
             child_1 = mutate(child_1, mutation_rate)
             child_2 = mutate(child_2, mutation_rate)
 
             offspring.extend([child_1, child_2])
 
-            parent_fitness = evaluate_population(
-                [parent_1, parent_2], self.processing_times
-            )
-            children_fitness = evaluate_population(
-                [child_1, child_2], self.processing_times
-            )
+            parent_fitness = evaluate_population([parent_1, parent_2])
+            children_fitness = evaluate_population([child_1, child_2])
 
-            children_reward += float(parent_fitness.sum() - children_fitness.sum())
+            # Per-pair improvement reward: dense signal per generation (eq. 4 in paper)
+            children_reward += float(children_fitness.sum() - parent_fitness.sum())
 
-        old_best = float(self.fitness.min())
+        old_best = float(self.fitness.max())
 
-        self.population = create_next_population(
-            self.population, offspring, self.processing_times
-        )
-        self.fitness = evaluate_population(self.population, self.processing_times)
+        if not offspring:
+            return self._get_state(), 0.0
 
-        new_best = float(self.fitness.min())
+        self.population = create_next_population(self.population, offspring)
+        self.fitness = evaluate_population(self.population)
 
-        reward = old_best - new_best  # + children_reward
+        new_best = float(self.fitness.max())
+
+        # Total reward = best-improvement (sparse, eq. 5) + per-child improvement (dense, eq. 4)
+        selection_reward = new_best - old_best
+        reward = selection_reward # + children_reward
 
         return self._get_state(), reward
 
@@ -77,7 +73,7 @@ class FSPEnvironment:
         # State = [avg_fitness, entropy]
         avg = self.fitness.mean()
 
-        probs = self.fitness / self.fitness.sum()
+        probs = self.fitness / (self.fitness.sum() + 1e-8)
         entropy = -(probs * torch.log(probs + 1e-8)).sum()
 
         return torch.stack([avg, entropy])
