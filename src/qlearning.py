@@ -14,7 +14,13 @@ class DQNModel(nn.Module):
             nn.ReLU(),
             nn.Linear(64, 64),
             nn.ReLU(),
-            nn.Linear(64, output_dim)
+            nn.Linear(64, 64),
+            nn.ReLU(),
+            nn.Linear(64, 64),
+            nn.ReLU(),
+            nn.Linear(64, 64),
+            nn.ReLU(),
+            nn.Linear(64, output_dim),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -52,7 +58,7 @@ class DQNAgent:
         self.update_target_network()
         self.target_network.eval()
 
-        # The paper calibrated alpha=0.1. Typically for Adam a smaller learning rate like 0.001 is used, 
+        # The paper calibrated alpha=0.1. Typically for Adam a smaller learning rate like 0.001 is used,
         # but since we aim to stay loyal to the paper, although alpha=0.1 with NN could be too large,
         # we will use typical NN settings but use the provided alpha for the step. The variable name is lr.
         self.optimizer = optim.Adam(self.q_network.parameters(), lr=lr)
@@ -96,10 +102,22 @@ class DQNAgent:
         batch = random.sample(self.memory, self.batch_size)
 
         states = torch.stack([x[0] for x in batch]).float().to(self.device)
-        actions = torch.tensor([x[1] for x in batch], dtype=torch.int64).unsqueeze(1).to(self.device)
-        rewards = torch.tensor([x[2] for x in batch], dtype=torch.float32).unsqueeze(1).to(self.device)
+        actions = (
+            torch.tensor([x[1] for x in batch], dtype=torch.int64)
+            .unsqueeze(1)
+            .to(self.device)
+        )
+        rewards = (
+            torch.tensor([x[2] for x in batch], dtype=torch.float32)
+            .unsqueeze(1)
+            .to(self.device)
+        )
         next_states = torch.stack([x[3] for x in batch]).float().to(self.device)
-        dones = torch.tensor([x[4] for x in batch], dtype=torch.float32).unsqueeze(1).to(self.device)
+        dones = (
+            torch.tensor([x[4] for x in batch], dtype=torch.float32)
+            .unsqueeze(1)
+            .to(self.device)
+        )
 
         self.q_network.train()
 

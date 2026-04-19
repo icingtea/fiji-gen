@@ -65,7 +65,7 @@ class RoyalRoadEnvironment:
 
         # Total reward = best-improvement (sparse, eq. 5) + per-child improvement (dense, eq. 4)
         selection_reward = new_best - old_best
-        reward = selection_reward # + children_reward
+        reward = selection_reward  # + children_reward
 
         return self._get_state(), reward
 

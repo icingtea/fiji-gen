@@ -16,17 +16,21 @@ action_space: List[Tuple[str, float, float]] = [
 
 
 def train() -> None:
-    env = RoyalRoadEnvironment()
+    env = RoyalRoadEnvironment(population_size=200)
     # epsilon_decay=0.97 reaches ~0.05 in ~100 episodes; target_update_freq syncs target
     # network every N steps within an episode for more stable bootstrapping.
-    agent = DQNAgent(action_space, epsilon_decay=0.97)
+    agent = DQNAgent(
+        action_space,
+        epsilon=0.5,
+        epsilon_min=0.0,
+        gamma=0.9,
+    )
 
     rewards_log: List[float] = []
     best_log: List[float] = []
 
-    episodes: int = 100
-    generations: int = 50
-    target_update_freq: int = 10  # sync target net every N steps within an episode
+    episodes: int = 200
+    generations: int = 300
 
     for ep in range(episodes):
         state: torch.Tensor = env.reset()
@@ -45,19 +49,18 @@ def train() -> None:
             agent.update(state, action_idx, reward, next_state)
 
             # Sync target network periodically within the episode
-            if (step + 1) % target_update_freq == 0:
-                agent.update_target_network()
+            # if (step + 1) % target_update_freq == 0:
 
             state = next_state
             total_reward += reward
 
         # Decay exploration after each episode
         agent.decay_epsilon()
-        
+
         # Final target sync at episode boundary
-        agent.update_target_network()
 
         best = float(env.fitness.max())
+        agent.update_target_network()
 
         rewards_log.append(total_reward)
         best_log.append(best)
