@@ -1,6 +1,7 @@
 #pragma once
 #include "ga.hpp"
 #include <concepts>
+#include <limits>
 #include <span>
 
 template <typename GAType>
@@ -13,47 +14,86 @@ concept IsGA = requires(GAType& ga) {
     { ga.generation };
 };
 
-template <typename S, typename A, IsGA GAType>
+struct GAState {
+    size_t generation;
+    size_t pop_size;
+    size_t curr_ep;
+    size_t n_ep;
+    double best_fitness;
+    double avg_fitness;
+    double epsilon;
+};
+
+template <typename A, IsGA GAType>
 class Agent {
     public:
         GAType ga;
         std::vector<A> actions;
         size_t gen_per_ep;
         size_t n_ep;
+        size_t curr_ep;
         double gamma;
         double epsilon;
         double epsilon_decay;
         double epsilon_min;
         double alpha;
-        S old_state;
-        S new_state;
+        GAState old_state;
+        GAState new_state;
         double latest_reward;
 
         explicit Agent(
             GAType&& ga,
             size_t gen_per_ep,
             size_t n_ep,
-            double gamma, 
+            double gamma,
             double epsilon,
             double epsilon_decay,
             double epsilon_min,
             double alpha
-        ) : ga(std::move(ga)), 
+        ) : ga(std::move(ga)),
             gen_per_ep(gen_per_ep),
             n_ep(n_ep),
+            curr_ep(0),
             gamma(gamma),
             epsilon(epsilon),
             epsilon_decay(epsilon_decay),
             epsilon_min(epsilon_min),
-            alpha(alpha) {}
+            alpha(alpha),
+            latest_reward(0.0) {}
+
+        virtual ~Agent() = default;
 
         virtual A select_action() = 0;
-        virtual S get_state() = 0;
         virtual void update() = 0;
-        void step(A action) {
+        virtual void post_step() = 0;
+
+        GAState get_state() {
+            auto& pop = ga.population();
+            double best = std::numeric_limits<double>::lowest();
+            double total = 0.0;
+            for (const auto& ind : pop) {
+                best = std::max(best, ind.fitness);
+                total += ind.fitness;
+            }
+            double avg = pop.empty() ? 0.0 : total / pop.size();
+
+            return GAState{
+                .generation   = ga.generation,
+                .pop_size     = pop.size(),
+                .curr_ep      = curr_ep,
+                .n_ep         = n_ep,
+                .best_fitness = best,
+                .avg_fitness  = avg,
+                .epsilon      = epsilon
+            };
+        }
+
+        void step() {
+            A action = select_action();
             old_state = get_state();
             latest_reward = ga.reward_step(action);
             new_state = get_state();
+            post_step();
         }
 };
 
@@ -71,6 +111,8 @@ template <typename T, typename A> class RLGA : public GA<T> {
         using GA<T>::pairings_;
         using GA<T>::generation;
         using GA<T>::pop_size;
+
+        virtual ~RLGA() = default;
 
         virtual double calculate_reward(
             std::span<const Individual<T>> old_population,
@@ -101,7 +143,7 @@ template <typename T, typename A> class RLGA : public GA<T> {
             }
 
             // TEMP
-            std::cout << "[ gen" << generation << " ] " << std::endl;
+            std::cout << "[ gen " << generation << " ]" << std::endl;
 
             generation++;
             pop_size = population_.size();
