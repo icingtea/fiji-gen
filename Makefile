@@ -1,2 +1,13 @@
+ifndef LIBTORCH_PATH
+	$(error LIBTORCH_PATH is not set. Please export it as an environment variable before running make.)
+endif
+
+.PHONY: all clean
+
 all:
-	g++ src/royal_road_problem.cpp -o bin/royal_road_problem -pthread -O3 -Iinclude -std=c++23
+	mkdir -p build
+	cd build && cmake ..
+	$(MAKE) -C build
+
+clean:
+	rm -rf build bin

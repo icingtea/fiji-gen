@@ -9,15 +9,6 @@
 #include <thread>
 #include <vector>
 
-template <typename GAType>
-concept IsGA = requires(GAType& ga) {
-    typename GAType::genome_type;
-    { ga.step() };
-    { ga.init_population() };
-    { ga.population() };
-    { ga.check_halt(ga.population()) } -> std::convertible_to<bool>;
-    { ga.generation };
-};
 
 template <IsGA GAType> struct migrant_buffer {
     using T = typename GAType::genome_type;
@@ -30,7 +21,7 @@ template <IsGA GAType> class Island {
     size_t id;
     size_t n_migrants;
     size_t quorum;
-    std::atomic<size_t>& done_counter;
+    std::atomic<unsigned>& done_counter;
     GAType ga;
     std::mt19937 rng;
     std::uniform_real_distribution<double> dist;
@@ -85,9 +76,20 @@ template <IsGA GAType> class Island {
 
         receive_migrants();
         if (active) {
-            // TEMP
-            std::cout << "[ gen " << ga.generation << " | id " << id << " ] "
-                      << std::endl;
+            if (ga.generation % 100 == 0) {
+                const auto& pop = ga.population();
+                if (!pop.empty()) {
+                    auto best_it = std::max_element(pop.begin(), pop.end(), [](const auto& a, const auto& b) {
+                        return a.fitness < b.fitness;
+                    });
+                    double total_fit = 0.0;
+                    for (const auto& ind : pop) total_fit += ind.fitness;
+                    double avg_fit = total_fit / pop.size();
+                    std::cout << "[ Island " << id << " | gen " << ga.generation 
+                              << " ] Best Fitness: " << best_it->fitness 
+                              << " | Avg Fitness: " << avg_fit << "\n";
+                }
+            }
             ga.step();
             send_migrants();
         }
@@ -144,8 +146,8 @@ template <IsGA GAType> class IslandModel {
     std::vector<std::unique_ptr<migrant_buffer<GAType>>> migrant_buffers;
 
     explicit IslandModel(unsigned n_threads, double migration_probability,
-                         unsigned n_migrants, unsigned pop_size,
-                         double mut_rate, unsigned quorum,
+                         unsigned n_migrants, unsigned quorum,
+                         std::vector<GAType>&& agents,
                          std::vector<unsigned> rng_seeds)
         : n_threads(n_threads), migration_probability(migration_probability),
           n_migrants(n_migrants) {
@@ -157,11 +159,11 @@ template <IsGA GAType> class IslandModel {
         }
 
         assert(rng_seeds.size() == n_threads);
+        assert(agents.size() == n_threads);
         for (unsigned i = 0; i < n_threads; i++) {
-            GAType ga(pop_size, mut_rate, rng_seeds[i]);
-            ga.init_population();
+            agents[i].init_population();
 
-            islands_.emplace_back(std::move(ga), migration_probability, i,
+            islands_.emplace_back(std::move(agents[i]), migration_probability, i,
                                   n_migrants, quorum, done_counter,
                                   migrant_buffers, rng_seeds[i]);
         }
@@ -191,6 +193,14 @@ template <IsGA GAType> class IslandModel {
         }
 
         return populations;
+    }
+
+    std::vector<unsigned> generations() {
+        std::vector<unsigned> gens;
+        for (Island<GAType>& island : islands_) {
+            gens.push_back(island.ga.generation);
+        }
+        return gens;
     }
 
   private:

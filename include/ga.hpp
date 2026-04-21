@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <concepts>
 #include <iostream>
 #include <vector>
 
@@ -11,6 +12,17 @@ template <typename T> struct Individual {
 template <typename T> struct Pairing {
     size_t parent_1_index;
     size_t parent_2_index;
+};
+
+// IsGA concept — defined once here, used across all headers.
+template <typename GAType>
+concept IsGA = requires(GAType& ga) {
+    typename GAType::genome_type;
+    { ga.step() };
+    { ga.init_population() };
+    { ga.population() };
+    { ga.check_halt(ga.population()) } -> std::convertible_to<bool>;
+    { ga.generation };
 };
 
 template <typename T> class GA {
@@ -34,7 +46,6 @@ template <typename T> class GA {
     virtual void init_population() = 0;
     virtual double compute_fitness(Individual<T>& individual) = 0;
     virtual std::vector<Pairing<T>> select_parents(
-        double selection_rate,
         std::vector<Individual<T>>& population) = 0;
     virtual Individual<T> crossover(Pairing<T>& pair) = 0;
     virtual void mutate(Individual<T>& individual) = 0;
@@ -54,9 +65,6 @@ template <typename T> class GA {
             child.fitness = compute_fitness(child);
             population_.push_back(std::move(child));
         }
-
-        // TEMP
-        std::cout << "[ gen" << generation << " ] " << std::endl;
 
         generation++;
         pop_size = population_.size();

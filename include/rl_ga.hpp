@@ -4,15 +4,7 @@
 #include <limits>
 #include <span>
 
-template <typename GAType>
-concept IsGA = requires(GAType& ga) {
-    typename GAType::genome_type;
-    { ga.step() };
-    { ga.init_population() };
-    { ga.population() };
-    { ga.check_halt(ga.population()) } -> std::convertible_to<bool>;
-    { ga.generation };
-};
+
 
 struct GAState {
     size_t generation;
@@ -27,6 +19,7 @@ struct GAState {
 template <typename A, IsGA GAType>
 class Agent {
     public:
+        using ga_type = GAType;
         GAType ga;
         std::vector<A> actions;
         size_t gen_per_ep;
@@ -107,6 +100,7 @@ template <typename T, typename A> class RLGA : public GA<T> {
         using GA<T>::mutate;
         using GA<T>::compute_fitness;
 
+        using GA<T>::GA;
         using GA<T>::population_;
         using GA<T>::pairings_;
         using GA<T>::generation;
@@ -141,9 +135,6 @@ template <typename T, typename A> class RLGA : public GA<T> {
                 children.push_back(child);
                 population_.push_back(std::move(child));
             }
-
-            // TEMP
-            std::cout << "[ gen " << generation << " ]" << std::endl;
 
             generation++;
             pop_size = population_.size();

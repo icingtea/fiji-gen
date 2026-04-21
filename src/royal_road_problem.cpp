@@ -64,13 +64,12 @@ class RoyalRoadGA : public GA<unsigned> {
         if (population.empty())
             return result;
 
-        std::uniform_int_distribution<unsigned> idx(0, population.size() - 1);
+        std::uniform_int_distribution<size_t> idx(0, population.size() - 1);
 
         for (unsigned i = 0; i < population.size() / 2; ++i) {
-            auto& p1 = population[idx(rng)];
-            auto& p2 = population[idx(rng)];
-
-            result.emplace_back(Pairing<unsigned>{p1, p2});
+            size_t i1 = idx(rng);
+            size_t i2 = idx(rng);
+            result.emplace_back(Pairing<unsigned>{i1, i2});
         }
 
         return result;
@@ -79,16 +78,17 @@ class RoyalRoadGA : public GA<unsigned> {
     Individual<unsigned> crossover(Pairing<unsigned>& pair) override {
         Individual<unsigned> child;
 
-        std::uniform_int_distribution<unsigned> cut_dist(0, genome_length - 1);
+        std::uniform_int_distribution<unsigned> cut_dist(1, genome_length - 1);
         unsigned cut = cut_dist(rng);
 
         // Create masks
-        unsigned left_mask = (cut == 32) ? UINT32_MAX : ((1u << cut) - 1);
+        unsigned left_mask = (1u << cut) - 1;
         unsigned right_mask = ~left_mask;
 
-        // Combine parents
-        child.genome = (pair.parent_1.genome & left_mask) |
-                       (pair.parent_2.genome & right_mask);
+        // Combine parents by index
+        child.genome =
+            (population_[pair.parent_1_index].genome & left_mask) |
+            (population_[pair.parent_2_index].genome & right_mask);
 
         return child;
     }

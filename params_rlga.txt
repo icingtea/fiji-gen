@@ -1,0 +1,29 @@
+# Deceptive Royal Road Problem Parameters - DeepRL GA
+
+# Core Problem
+GENOME_LENGTH 128
+BLOCK_SIZE 8
+
+# RL Population Defaults
+pop_size 10000
+seed 42
+
+# Q-Learning Settings
+gen_per_ep 100
+n_ep 200
+gamma 0.9
+epsilon 0.5
+epsilon_decay 0.97
+epsilon_min 0.05
+lr 0.001
+batch_size 128
+memory_size 20000
+
+# Action Space (List formatting)
+mut_rates 0.01 0.05 0.1 0.2 0.4 0.8
+
+# Parallel Settings
+n_threads 4
+n_migrants 0
+migration_probability 0.5
+quorum 2

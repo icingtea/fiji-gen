@@ -1,0 +1,15 @@
+# Deceptive Royal Road Problem Parameters - GA Baseline
+
+# Core Problem
+GENOME_LENGTH 128
+BLOCK_SIZE 8
+
+# GA Parameters
+pop_size 10000
+mut_rate 0.05
+
+# Parallel Settings
+n_threads 4
+n_migrants 500
+migration_probability 0.5
+quorum 2

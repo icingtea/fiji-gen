@@ -11,123 +11,218 @@
 #include <thread>
 #include <vector>
 
-template <typename GAType>
-concept IsGA = requires(GAType& ga) {
-    typename GAType::genome_type;
-    { ga.step() };
-    { ga.init_population() };
-    { ga.population() };
-    { ga.check_halt(ga.population()) } -> std::convertible_to<bool>;
-    { ga.generation };
-};
 
-template <typename A, IsGA GAType> class RL_Island : Island {
-    public:
-        using Island<GAType>::id;
-        using Island<GAType>::n_migrants;
-        using Island<GAType>::quorum;
-        using Island<GAType>::done_counter;
-        using Island<GAType>::rng;
-        using Island<GAType>::dist;
+// RL_Island: standalone RL island (does NOT inherit Island<GAType>).
+// Mirrors Island<GAType> migration logic but delegates stepping to an
+// Agent<ActionType, GAType>.  A must be a concrete subclass of
+// Agent<ActionType, GAType> (e.g. RoyalRoadQAgent).
+template <typename A>
+class RL_Island {
+  public:
+    using GAType = std::remove_cvref_t<decltype(std::declval<A&>().ga)>;
 
-        Agent<A, GAType> agent;
+    size_t id;
+    size_t n_migrants;
+    size_t quorum;
+    std::atomic<unsigned>& done_counter;
+    A agent;
+    std::mt19937 rng;
+    std::uniform_real_distribution<double> dist;
 
-        explicit RL_Island (
-            Agent<A, GAType>&& Agent, double migration_probability, unsigned island_id,
-            unsigned n_migrants, unsigned quorum,
-            std::atomic<unsigned>& done_counter,
-            std::vector<std::unique_ptr<migrant_buffer<GAType>>>& migrant_buffers,
-            unsigned rng_seed
-        )
-            : agent(std::move(agent)), migration_probability(migration_probability),
-            id(island_id), n_migrants(n_migrants),
-            migrant_buffers_(migrant_buffers),
-            self_migrant_buffer_(*migrant_buffers_[id]), quorum(quorum),
-            done_counter(done_counter),
-            neighbor_migrant_buffer_(
-              *migrant_buffers_[(id + 1) % migrant_buffers_.size()]
-            ),
-            rng(rng_seed), dist(0.0, 1.0) {}
+    explicit RL_Island(
+        A&& agent_in,
+        double migration_probability,
+        unsigned island_id,
+        unsigned n_migrants,
+        unsigned quorum,
+        std::atomic<unsigned>& done_counter,
+        std::vector<std::unique_ptr<migrant_buffer<GAType>>>& migrant_buffers,
+        unsigned rng_seed)
+        : agent(std::move(agent_in)),
+          migration_probability_(migration_probability),
+          id(island_id),
+          n_migrants(n_migrants),
+          migrant_buffers_(migrant_buffers),
+          self_migrant_buffer_(*migrant_buffers_[id]),
+          quorum(quorum),
+          done_counter(done_counter),
+          neighbor_migrant_buffer_(
+              *migrant_buffers_[(id + 1) % migrant_buffers_.size()]),
+          rng(rng_seed),
+          dist(0.0, 1.0) {}
 
-        void island_run() override {
-            bool counted = false;
-            while (true) {
-                island_step(!counted);
-            
-                if (!counted && agent.ga.check_halt(agent.ga.population())) {
-                    unsigned expected_done =
-                        done_counter.load(std::memory_order_relaxed);
-                    while (expected_done < quorum) {
-                        if (done_counter.compare_exchange_weak(
-                                expected_done, expected_done + 1,
-                                std::memory_order_acq_rel,
-                                std::memory_order_relaxed)) {
-                            counted = true;
-                            break;
-                        }
+    void island_run() {
+        bool counted = false;
+        while (true) {
+            island_step(!counted);
+
+            if (!counted &&
+                agent.ga.check_halt(agent.ga.population())) {
+                unsigned expected_done =
+                    done_counter.load(std::memory_order_relaxed);
+                while (expected_done < quorum) {
+                    if (done_counter.compare_exchange_weak(
+                            expected_done, expected_done + 1,
+                            std::memory_order_acq_rel,
+                            std::memory_order_relaxed)) {
+                        counted = true;
+                        break;
                     }
                 }
-            
-                if (done_counter.load(std::memory_order_relaxed) >= quorum) {
-                    break;
-                }
+            }
+
+            if (done_counter.load(std::memory_order_relaxed) >= quorum) {
+                break;
             }
         }
+    }
 
-    private:
-        double migration_probability;
-        std::vector<std::unique_ptr<migrant_buffer<GAType>>>& migrant_buffers_;
-        migrant_buffer<GAType>& self_migrant_buffer_;
-        migrant_buffer<GAType>& neighbor_migrant_buffer_;
+  private:
+    double migration_probability_;
+    std::vector<std::unique_ptr<migrant_buffer<GAType>>>& migrant_buffers_;
+    migrant_buffer<GAType>& self_migrant_buffer_;
+    migrant_buffer<GAType>& neighbor_migrant_buffer_;
 
-        void island_step(bool active) override {
-
-            receive_migrants();
-            if (active) {
-                // TEMP
-                std::cout << "[ gen " << agent.ga.generation << " | id " << id << " ] "
-                          << std::endl;
-                agent.step();
-                send_migrants();
-            }
-        };
-
-        void send_migrants() override {
-            if (dist(rng) < migration_probability &&
-                !neighbor_migrant_buffer_.full.load(std::memory_order_acquire)) {
-                neighbor_migrant_buffer_.buffer.clear();
-
-                unsigned round_n_migrants =
-                    (agent.ga.pop_size > 1) ? std::min(n_migrants, agent.ga.pop_size - 1) : 0;
-                if (round_n_migrants == 0)
-                    return;
-
-                agent.ga.partition_by_fitness(round_n_migrants);
-                auto& population = agent.ga.population();
-
-                for (unsigned i = 0; i < round_n_migrants; i++) {
-                    neighbor_migrant_buffer_.buffer.push_back(
-                        std::move(population[i]));
+    void island_step(bool active) {
+        receive_migrants();
+        if (active) {
+            if (agent.ga.generation % 100 == 0) {
+                const auto& pop = agent.ga.population();
+                if (!pop.empty()) {
+                    auto best_it = std::max_element(pop.begin(), pop.end(), [](const auto& a, const auto& b) {
+                        return a.fitness < b.fitness;
+                    });
+                    double total_fit = 0.0;
+                    for (const auto& ind : pop) total_fit += ind.fitness;
+                    double avg_fit = total_fit / pop.size();
+                    std::cout << "[ Island " << id << " | gen " << agent.ga.generation 
+                              << " ] Best Fitness: " << best_it->fitness 
+                              << " | Avg Fitness: " << avg_fit << "\n";
                 }
-
-                population.erase(population.begin(),
-                                 population.begin() + round_n_migrants);
-                neighbor_migrant_buffer_.full.store(true,
-                                                    std::memory_order_release);
             }
+            agent.step();
+            send_migrants();
+        }
+    }
+
+    void send_migrants() {
+        if (dist(rng) < migration_probability_ &&
+            !neighbor_migrant_buffer_.full.load(std::memory_order_acquire)) {
+            neighbor_migrant_buffer_.buffer.clear();
+
+            unsigned round_n_migrants =
+                (agent.ga.pop_size > 1)
+                    ? std::min(n_migrants, agent.ga.pop_size - 1)
+                    : 0;
+            if (round_n_migrants == 0)
+                return;
+
+            agent.ga.partition_by_fitness(round_n_migrants);
+            auto& population = agent.ga.population();
+
+            for (unsigned i = 0; i < round_n_migrants; i++) {
+                neighbor_migrant_buffer_.buffer.push_back(
+                    std::move(population[i]));
+            }
+
+            population.erase(population.begin(),
+                             population.begin() + round_n_migrants);
+            neighbor_migrant_buffer_.full.store(true,
+                                               std::memory_order_release);
+        }
+    }
+
+    void receive_migrants() {
+        if (self_migrant_buffer_.full.load(std::memory_order_acquire)) {
+            auto& population = agent.ga.population();
+            auto& buf = self_migrant_buffer_.buffer;
+
+            for (auto& individual : buf) {
+                population.push_back(std::move(individual));
+            }
+
+            buf.clear();
+            self_migrant_buffer_.full.store(false, std::memory_order_release);
+        }
+    }
+};
+
+// RL_IslandModel: manages a ring of RL_Island instances running in parallel.
+// Caller constructs the concrete agents (one per island) and passes them in.
+template <typename A>
+class RL_IslandModel {
+  public:
+    using GAType = typename RL_Island<A>::GAType;
+
+    unsigned n_threads;
+    double migration_probability;
+    unsigned n_migrants;
+    std::atomic<unsigned> done_counter{0};
+    std::vector<std::unique_ptr<migrant_buffer<GAType>>> migrant_buffers;
+
+    explicit RL_IslandModel(unsigned n_threads, double migration_probability,
+                            unsigned n_migrants, unsigned quorum,
+                            std::vector<A>&& agents,
+                            std::vector<unsigned> rng_seeds)
+        : n_threads(n_threads),
+          migration_probability(migration_probability),
+          n_migrants(n_migrants) {
+
+        assert(agents.size() == n_threads);
+        assert(rng_seeds.size() == n_threads);
+
+        migrant_buffers.reserve(n_threads);
+        for (unsigned i = 0; i < n_threads; i++) {
+            migrant_buffers.push_back(
+                std::make_unique<migrant_buffer<GAType>>());
         }
 
-        void receive_migrants() override {
-            if (self_migrant_buffer_.full.load(std::memory_order_acquire)) {
-                auto& population = agent.ga.population();
-                auto& buf = self_migrant_buffer_.buffer;
+        // Reserve so that emplace_back never reallocates — RL_Island holds
+        // references that must not dangle.
+        islands_.reserve(n_threads);
+        for (unsigned i = 0; i < n_threads; i++) {
+            islands_.emplace_back(std::move(agents[i]), migration_probability,
+                                  i, n_migrants, quorum, done_counter,
+                                  migrant_buffers, rng_seeds[i]);
+        }
+    }
 
-                for (auto& individual : buf) {
-                    population.push_back(std::move(individual));
-                }
+    bool island_model_run() {
+        try {
+            std::vector<std::thread> threads;
 
-                buf.clear();
-                self_migrant_buffer_.full.store(false, std::memory_order_release);
+            for (unsigned i = 0; i < n_threads; i++) {
+                threads.emplace_back(&RL_Island<A>::island_run,
+                                     &islands_[i]);
             }
-        };
+
+            for (auto& t : threads) {
+                t.join();
+            }
+        } catch (...) {
+            return false;
+        }
+        return true;
+    }
+
+    std::vector<std::vector<Individual<typename GAType::genome_type>>>
+    populations() {
+        std::vector<std::vector<Individual<typename GAType::genome_type>>>
+            result;
+        for (auto& island : islands_) {
+            result.push_back(island.agent.ga.population());
+        }
+        return result;
+    }
+
+    std::vector<unsigned> generations() {
+        std::vector<unsigned> gens;
+        for (auto& island : islands_) {
+            gens.push_back(island.agent.ga.generation);
+        }
+        return gens;
+    }
+
+  private:
+    std::vector<RL_Island<A>> islands_;
 };
