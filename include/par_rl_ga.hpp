@@ -154,23 +154,34 @@ class RL_Island {
             !neighbor_migrant_buffer_.full.load(std::memory_order_acquire)) {
             neighbor_migrant_buffer_.buffer.clear();
 
+            auto& population = agent.ga.population();
+            unsigned pop_sz = static_cast<unsigned>(population.size());
             unsigned round_n_migrants =
-                (agent.ga.pop_size > 1)
-                    ? std::min(n_migrants, agent.ga.pop_size - 1)
-                    : 0;
+                (pop_sz > 1) ? std::min(static_cast<unsigned>(n_migrants), pop_sz - 1) : 0;
             if (round_n_migrants == 0)
                 return;
 
-            agent.ga.partition_by_fitness(round_n_migrants);
-            auto& population = agent.ga.population();
-
-            for (unsigned i = 0; i < round_n_migrants; i++) {
-                neighbor_migrant_buffer_.buffer.push_back(
-                    std::move(population[i]));
+            // Build an index vector and do a partial Fisher-Yates shuffle
+            // to pick round_n_migrants random (distinct) positions.
+            std::vector<unsigned> indices(pop_sz);
+            std::iota(indices.begin(), indices.end(), 0u);
+            for (unsigned i = 0; i < round_n_migrants; ++i) {
+                std::uniform_int_distribution<unsigned> pick(i, pop_sz - 1);
+                std::swap(indices[i], indices[pick(rng)]);
             }
 
-            population.erase(population.begin(),
-                             population.begin() + round_n_migrants);
+            // Sort the selected indices descending so erasing by position
+            // doesn't shift indices we haven't processed yet.
+            std::sort(indices.begin(), indices.begin() + round_n_migrants,
+                      std::greater<unsigned>());
+
+            for (unsigned i = 0; i < round_n_migrants; ++i) {
+                unsigned idx = indices[i];
+                neighbor_migrant_buffer_.buffer.push_back(
+                    std::move(population[idx]));
+                population.erase(population.begin() + idx);
+            }
+
             neighbor_migrant_buffer_.full.store(true,
                                                std::memory_order_release);
         }
@@ -265,6 +276,13 @@ class RL_IslandModel {
             gens.push_back(island.agent.ga.generation);
         }
         return gens;
+    }
+
+    // Returns true if island i reached the optimal solution (check_halt == true).
+    bool island_solved(unsigned i) {
+        auto& pop = islands_[i].agent.ga.population();
+        return islands_[i].agent.ga.check_halt(
+            const_cast<std::vector<Individual<typename GAType::genome_type>>&>(pop));
     }
 
   private:

@@ -756,6 +756,10 @@ int main_par_rlga(const std::map<std::string, std::string>& params) {
 
     std::cout << "\n--- Results ---\n";
     auto populations = model.populations();
+    auto gens = model.generations();
+    unsigned min_gens_solved = std::numeric_limits<unsigned>::max();
+    unsigned solved_count = 0;
+
     for (unsigned i = 0; i < populations.size(); ++i) {
         auto& pop = populations[i];
         if (pop.empty()) {
@@ -765,8 +769,27 @@ int main_par_rlga(const std::map<std::string, std::string>& params) {
         auto best = std::max_element(
             pop.begin(), pop.end(),
             [](const auto& a, const auto& b) { return a.fitness < b.fitness; });
+
+        // Check if this island reached the optimal solution
+        bool solved = model.island_solved(i);
         std::cout << "Island " << i << " best fitness: " << best->fitness
-                  << " (generations: " << model.generations()[i] << ")\n";
+                  << " | generations: " << gens[i]
+                  << (solved ? " [SOLVED]" : " [did not solve]") << "\n";
+
+        if (solved) {
+            ++solved_count;
+            min_gens_solved = std::min(min_gens_solved, gens[i]);
+        }
+    }
+
+    std::cout << "\n--- Summary ---\n";
+    if (solved_count > 0) {
+        std::cout << "Islands solved: " << solved_count << " / "
+                  << populations.size() << "\n"
+                  << "Minimum generations to solution: " << min_gens_solved
+                  << "\n";
+    } else {
+        std::cout << "No island reached the optimal solution.\n";
     }
 
     return 0;
