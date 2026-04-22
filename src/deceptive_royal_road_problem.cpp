@@ -59,13 +59,18 @@ class DeceptiveRoyalRoadGA : public GA<std::vector<uint8_t>> {
     unsigned BLOCK_SIZE;
     unsigned NUM_BLOCKS;
     double MAX_FITNESS;
+    double selection_rate;
 
     std::uniform_real_distribution<double> prob_dist{0.0, 1.0};
     std::uniform_int_distribution<uint8_t> bit_dist{0, 1};
 
-    DeceptiveRoyalRoadGA(int pop_size, double mut_rate, unsigned seed, unsigned genome_length, unsigned block_size)
-        : GA(pop_size, mut_rate, seed), rng(seed), GENOME_LENGTH(genome_length), BLOCK_SIZE(block_size),
-          NUM_BLOCKS(genome_length / block_size), MAX_FITNESS(static_cast<double>((genome_length / block_size) * (block_size * 2))) {}
+    DeceptiveRoyalRoadGA(int pop_size, double mut_rate, unsigned seed,
+                         unsigned genome_length, unsigned block_size,
+                         double sel_rate = 0.5)
+        : GA(pop_size, mut_rate, seed), rng(seed), GENOME_LENGTH(genome_length),
+          BLOCK_SIZE(block_size), NUM_BLOCKS(genome_length / block_size),
+          MAX_FITNESS(static_cast<double>((genome_length / block_size) * (block_size * 2))),
+          selection_rate(sel_rate) {}
 
     void init_population() override {
         population_.clear();
@@ -109,44 +114,68 @@ class DeceptiveRoyalRoadGA : public GA<std::vector<uint8_t>> {
         if (pop.empty())
             return result;
 
-        std::uniform_int_distribution<size_t> idx(0, pop.size() - 1);
+        // Elitism: top selection_rate fraction forms the mating pool
+        size_t n = static_cast<size_t>(pop.size() * selection_rate);
+        if (n < 2)
+            n = 2;
+        n = std::min(n, pop.size());
 
-        // Simple random parent selection (from royal_road_problem.cpp)
-        for (size_t i = 0; i < pop.size() / 2; ++i) {
-            result.emplace_back(
-                Pairing<std::vector<uint8_t>>{idx(rng), idx(rng)});
-        }
+        std::vector<size_t> order(pop.size());
+        std::iota(order.begin(), order.end(), 0);
+        std::partial_sort(order.begin(), order.begin() + n, order.end(),
+                          [&](size_t a, size_t b) {
+                              return pop[a].fitness > pop[b].fitness;
+                          });
+
+        // Random pairings drawn from the elite pool
+        std::uniform_int_distribution<size_t> pick(0, n - 1);
+        for (size_t i = 0; i < pop.size() / 2; ++i)
+            result.emplace_back(Pairing<std::vector<uint8_t>>{order[pick(rng)],
+                                                              order[pick(rng)]});
         return result;
     }
 
-    // Two-Point Crossover for bit vectors
     Individual<std::vector<uint8_t>> crossover(
         Pairing<std::vector<uint8_t>>& pair) override {
 
         Individual<std::vector<uint8_t>> child;
         child.genome.resize(GENOME_LENGTH);
 
-        std::uniform_int_distribution<unsigned> cut_dist(1, GENOME_LENGTH - 1);
-        unsigned cut1 = cut_dist(rng);
-        unsigned cut2 = cut_dist(rng);
-
-        if (cut1 > cut2) std::swap(cut1, cut2);
-
         const auto& p1 = population_[pair.parent_1_index].genome;
         const auto& p2 = population_[pair.parent_2_index].genome;
 
-        // p1 -> p2 -> p1
-        std::copy(p1.begin(), p1.begin() + cut1, child.genome.begin());
-        std::copy(p2.begin() + cut1, p2.begin() + cut2, child.genome.begin() + cut1);
-        std::copy(p1.begin() + cut2, p1.end(), child.genome.begin() + cut2);
+        // Number of blocks
+        unsigned num_blocks = NUM_BLOCKS;
+
+        // Choose cut in block space (not bit space)
+        std::uniform_int_distribution<unsigned> block_cut_dist(1,
+                                                               num_blocks - 1);
+        unsigned block_cut = block_cut_dist(rng);
+
+        // Convert block cut to bit index
+        unsigned cut = block_cut * BLOCK_SIZE;
+
+        // Copy whole blocks
+        std::copy(p1.begin(), p1.begin() + cut, child.genome.begin());
+        std::copy(p2.begin() + cut, p2.end(), child.genome.begin() + cut);
 
         return child;
     }
 
     void mutate(Individual<std::vector<uint8_t>>& ind) override {
-        for (unsigned i = 0; i < GENOME_LENGTH; ++i) {
+
+        // Block-level mutation
+        for (unsigned b = 0; b < NUM_BLOCKS; ++b) {
+
             if (prob_dist(rng) < mut_rate) {
-                ind.genome[i] ^= 1; // bit flip
+
+                // Flip entire block
+                unsigned start = b * BLOCK_SIZE;
+                unsigned end = start + BLOCK_SIZE;
+
+                for (unsigned i = start; i < end; ++i) {
+                    ind.genome[i] ^= 1;
+                }
             }
         }
     }
@@ -193,16 +222,17 @@ int get_param(const std::map<std::string, std::string>& params, const std::strin
 
 int main_seq(const std::map<std::string, std::string>& params) {
     int pop_size = get_param(params, "pop_size", 1000);
-    double mut_rate = get_param(params, "mut_rate", 0.05);
+    double mut_rate = get_param(params, "mut_rate", 0.01);
     unsigned genome_length = static_cast<unsigned>(get_param(params, "GENOME_LENGTH", 128));
     unsigned block_size = static_cast<unsigned>(get_param(params, "BLOCK_SIZE", 8));
+    double selection_rate = get_param(params, "selection_rate", 0.5);
 
     std::cout << "=== Deceptive Royal Road Problem ===\n";
     std::cout << genome_length << " bits | " << (genome_length / block_size) << " Blocks | Max Fitness: " 
               << (genome_length / block_size) * (block_size * 2) << " \n\n";
     std::cout << "Running sequential GA...\n";
 
-    DeceptiveRoyalRoadGA ga(pop_size, mut_rate, 42, genome_length, block_size);
+    DeceptiveRoyalRoadGA ga(pop_size, mut_rate, 42, genome_length, block_size, selection_rate);
 
     ga.init_population();
     ga.run();
@@ -221,12 +251,13 @@ int main_seq(const std::map<std::string, std::string>& params) {
 int main_par(const std::map<std::string, std::string>& params) {
     unsigned n_threads = get_param(params, "n_threads", 4);
     unsigned pop_size = get_param(params, "pop_size", 10000);
-    double mut_rate = get_param(params, "mut_rate", 0.05); // Higher mutation often better on deceptive traps
+    double mut_rate = get_param(params, "mut_rate", 0.01);
     unsigned n_migrants = get_param(params, "n_migrants", 500);
     double migration_probability = get_param(params, "migration_probability", 0.5);
     unsigned quorum = get_param(params, "quorum", 2);
     unsigned genome_length = static_cast<unsigned>(get_param(params, "GENOME_LENGTH", 128));
     unsigned block_size = static_cast<unsigned>(get_param(params, "BLOCK_SIZE", 8));
+    double selection_rate = get_param(params, "selection_rate", 0.5);
 
     std::cout << "=== Deceptive Royal Road Problem ===\n";
     std::cout << genome_length << " bits | " << (genome_length / block_size) << " Blocks | Max Fitness: " 
@@ -240,7 +271,7 @@ int main_par(const std::map<std::string, std::string>& params) {
     std::vector<DeceptiveRoyalRoadGA> agents;
     agents.reserve(n_threads);
     for (unsigned i = 0; i < n_threads; i++) {
-        agents.emplace_back(pop_size, mut_rate, seeds[i], genome_length, block_size);
+        agents.emplace_back(pop_size, mut_rate, seeds[i], genome_length, block_size, selection_rate);
     }
 
     IslandModel<DeceptiveRoyalRoadGA> model(n_threads, migration_probability,

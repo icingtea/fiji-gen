@@ -25,5 +25,5 @@ mut_rates 0.01 0.05 0.1 0.2 0.4 0.8
 # Parallel Settings
 n_threads 20
 n_migrants 20
-migration_probability 0.5
+migration_probability 0.8
 quorum 2

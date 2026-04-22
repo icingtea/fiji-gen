@@ -1,7 +1,7 @@
 #pragma once
 #include "ga.hpp"
-#include "rl_ga.hpp"
 #include "par_ga.hpp"
+#include "rl_ga.hpp"
 #include <atomic>
 #include <cassert>
 #include <concepts>
@@ -11,13 +11,11 @@
 #include <thread>
 #include <vector>
 
-
 // RL_Island: standalone RL island (does NOT inherit Island<GAType>).
 // Mirrors Island<GAType> migration logic but delegates stepping to an
 // Agent<ActionType, GAType>.  A must be a concrete subclass of
 // Agent<ActionType, GAType> (e.g. RoyalRoadQAgent).
-template <typename A>
-class RL_Island {
+template <typename A> class RL_Island {
   public:
     using GAType = std::remove_cvref_t<decltype(std::declval<A&>().ga)>;
 
@@ -30,26 +28,19 @@ class RL_Island {
     std::uniform_real_distribution<double> dist;
 
     explicit RL_Island(
-        A&& agent_in,
-        double migration_probability,
-        unsigned island_id,
-        unsigned n_migrants,
-        unsigned quorum,
+        A&& agent_in, double migration_probability, unsigned island_id,
+        unsigned n_migrants, unsigned quorum,
         std::atomic<unsigned>& done_counter,
         std::vector<std::unique_ptr<migrant_buffer<GAType>>>& migrant_buffers,
         unsigned rng_seed)
         : agent(std::move(agent_in)),
-          migration_probability_(migration_probability),
-          id(island_id),
-          n_migrants(n_migrants),
-          migrant_buffers_(migrant_buffers),
-          self_migrant_buffer_(*migrant_buffers_[id]),
-          quorum(quorum),
+          migration_probability_(migration_probability), id(island_id),
+          n_migrants(n_migrants), migrant_buffers_(migrant_buffers),
+          self_migrant_buffer_(*migrant_buffers_[id]), quorum(quorum),
           done_counter(done_counter),
           neighbor_migrant_buffer_(
               *migrant_buffers_[(id + 1) % migrant_buffers_.size()]),
-          rng(rng_seed),
-          dist(0.0, 1.0) {}
+          rng(rng_seed), dist(0.0, 1.0) {}
 
     void island_run() {
         bool counted = false;
@@ -68,8 +59,7 @@ class RL_Island {
 
                 // Epsilon decay happens inside agent.step() already.
                 // Check if this island reached the optimum
-                if (!counted &&
-                    agent.ga.check_halt(agent.ga.population())) {
+                if (!counted && agent.ga.check_halt(agent.ga.population())) {
                     unsigned expected_done =
                         done_counter.load(std::memory_order_relaxed);
                     while (expected_done < quorum) {
@@ -81,11 +71,10 @@ class RL_Island {
                             break;
                         }
                     }
-                    if (counted) break;
+                    if (counted)
+                        break;
                 }
             }
-
-            
 
             // After each episode: sync target network + decay epsilon
             agent.sync_target();
@@ -108,8 +97,7 @@ class RL_Island {
             while (expected_done < quorum) {
                 if (done_counter.compare_exchange_weak(
                         expected_done, expected_done + 1,
-                        std::memory_order_acq_rel,
-                        std::memory_order_relaxed)) {
+                        std::memory_order_acq_rel, std::memory_order_relaxed)) {
                     break;
                 }
             }
@@ -127,24 +115,26 @@ class RL_Island {
     void island_step(bool active) {
         receive_migrants();
         if (active) {
-            if (agent.ga.generation % 100 == 0) {
+            if (agent.ga.generation % agent.gen_per_ep == 0) {
                 const auto& pop = agent.ga.population();
                 if (!pop.empty()) {
-                    auto best_it = std::max_element(pop.begin(), pop.end(), [](const auto& a, const auto& b) {
-                        return a.fitness < b.fitness;
-                    });
+                    auto best_it =
+                        std::max_element(pop.begin(), pop.end(),
+                                         [](const auto& a, const auto& b) {
+                                             return a.fitness < b.fitness;
+                                         });
                     double total_fit = 0.0;
-                    for (const auto& ind : pop) total_fit += ind.fitness;
+                    for (const auto& ind : pop)
+                        total_fit += ind.fitness;
                     double avg_fit = total_fit / pop.size();
-                    std::cout << "[ Island " << id
-                              << " | ep " << agent.curr_ep
+                    std::cout << "[ Island " << id << " | ep " << agent.curr_ep
                               << " | gen " << agent.ga.generation
                               << " ] Best: " << best_it->fitness
                               << " | Avg: " << avg_fit
                               << " | eps: " << agent.epsilon << "\n";
                 }
             }
-            agent.step();   // selects action, runs GA step, decays epsilon
+            agent.step(); // selects action, runs GA step, decays epsilon
             send_migrants();
         }
     }
@@ -157,7 +147,9 @@ class RL_Island {
             auto& population = agent.ga.population();
             unsigned pop_sz = static_cast<unsigned>(population.size());
             unsigned round_n_migrants =
-                (pop_sz > 1) ? std::min(static_cast<unsigned>(n_migrants), pop_sz - 1) : 0;
+                (pop_sz > 1)
+                    ? std::min(static_cast<unsigned>(n_migrants), pop_sz - 1)
+                    : 0;
             if (round_n_migrants == 0)
                 return;
 
@@ -183,7 +175,7 @@ class RL_Island {
             }
 
             neighbor_migrant_buffer_.full.store(true,
-                                               std::memory_order_release);
+                                                std::memory_order_release);
         }
     }
 
@@ -204,8 +196,7 @@ class RL_Island {
 
 // RL_IslandModel: manages a ring of RL_Island instances running in parallel.
 // Caller constructs the concrete agents (one per island) and passes them in.
-template <typename A>
-class RL_IslandModel {
+template <typename A> class RL_IslandModel {
   public:
     using GAType = typename RL_Island<A>::GAType;
 
@@ -219,8 +210,7 @@ class RL_IslandModel {
                             unsigned n_migrants, unsigned quorum,
                             std::vector<A>&& agents,
                             std::vector<unsigned> rng_seeds)
-        : n_threads(n_threads),
-          migration_probability(migration_probability),
+        : n_threads(n_threads), migration_probability(migration_probability),
           n_migrants(n_migrants) {
 
         assert(agents.size() == n_threads);
@@ -247,8 +237,7 @@ class RL_IslandModel {
             std::vector<std::thread> threads;
 
             for (unsigned i = 0; i < n_threads; i++) {
-                threads.emplace_back(&RL_Island<A>::island_run,
-                                     &islands_[i]);
+                threads.emplace_back(&RL_Island<A>::island_run, &islands_[i]);
             }
 
             for (auto& t : threads) {
@@ -278,11 +267,13 @@ class RL_IslandModel {
         return gens;
     }
 
-    // Returns true if island i reached the optimal solution (check_halt == true).
+    // Returns true if island i reached the optimal solution (check_halt ==
+    // true).
     bool island_solved(unsigned i) {
         auto& pop = islands_[i].agent.ga.population();
         return islands_[i].agent.ga.check_halt(
-            const_cast<std::vector<Individual<typename GAType::genome_type>>&>(pop));
+            const_cast<std::vector<Individual<typename GAType::genome_type>>&>(
+                pop));
     }
 
   private:
