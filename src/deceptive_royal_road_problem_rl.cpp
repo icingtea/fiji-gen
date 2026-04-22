@@ -21,8 +21,8 @@
 #include <string>
 #include <vector>
 
-#include <map>
 #include <fstream>
+#include <map>
 #include <sstream>
 #include <string>
 
@@ -33,12 +33,14 @@ std::map<std::string, std::string> load_params(const std::string& filename) {
     std::map<std::string, std::string> params;
     std::ifstream file(filename);
     if (!file.is_open()) {
-        std::cerr << "Warning: Could not open parameter file " << filename << ". Using defaults.\n";
+        std::cerr << "Warning: Could not open parameter file " << filename
+                  << ". Using defaults.\n";
         return params;
     }
     std::string line;
     while (std::getline(file, line)) {
-        if (line.empty() || line[0] == '#') continue;
+        if (line.empty() || line[0] == '#')
+            continue;
         std::istringstream iss(line);
         std::string key;
         if (iss >> key) {
@@ -79,7 +81,9 @@ void init_action_space(const std::vector<double>& custom_mut_rates) {
                                                   SelectionMethod::ROULETTE,
                                                   SelectionMethod::RANK};
     const std::vector<double> sel_rates = {0.3, 0.6, 0.9};
-    std::vector<double> mut_rates = custom_mut_rates.empty() ? std::vector<double>{0.01, 0.05, 0.2, 0.4} : custom_mut_rates;
+    std::vector<double> mut_rates =
+        custom_mut_rates.empty() ? std::vector<double>{0.01, 0.05, 0.2, 0.4}
+                                 : custom_mut_rates;
 
     for (auto m : methods)
         for (auto sr : sel_rates)
@@ -141,10 +145,13 @@ class DeceptiveRoyalRoadRLGA : public RLGA<std::vector<uint8_t>, int> {
     std::uniform_int_distribution<uint8_t> bit_dist{0, 1};
 
     explicit DeceptiveRoyalRoadRLGA(int pop_size, double mut_rate,
-                                    unsigned seed, unsigned genome_length, unsigned block_size)
+                                    unsigned seed, unsigned genome_length,
+                                    unsigned block_size)
         : RLGA(pop_size, mut_rate, seed), rng(seed),
-          GENOME_LENGTH(genome_length), BLOCK_SIZE(block_size), NUM_BLOCKS(genome_length / block_size), 
-          MAX_FITNESS(static_cast<double>((genome_length / block_size) * (block_size * 2))),
+          GENOME_LENGTH(genome_length), BLOCK_SIZE(block_size),
+          NUM_BLOCKS(genome_length / block_size),
+          MAX_FITNESS(static_cast<double>((genome_length / block_size) *
+                                          (block_size * 2))),
           current_mutation_rate(mut_rate) {}
 
     // --------------------------------------------------------
@@ -276,8 +283,8 @@ class DeceptiveRoyalRoadRLGA : public RLGA<std::vector<uint8_t>, int> {
     //     Individual<std::vector<uint8_t>> child;
     //     child.genome.resize(GENOME_LENGTH);
 
-    //     std::uniform_int_distribution<unsigned> cut_dist(1, GENOME_LENGTH - 1);
-    //     unsigned cut = cut_dist(rng);
+    //     std::uniform_int_distribution<unsigned> cut_dist(1, GENOME_LENGTH -
+    //     1); unsigned cut = cut_dist(rng);
 
     //     const auto& p1 = population_[pair.parent_1_index].genome;
     //     const auto& p2 = population_[pair.parent_2_index].genome;
@@ -301,7 +308,8 @@ class DeceptiveRoyalRoadRLGA : public RLGA<std::vector<uint8_t>, int> {
         unsigned num_blocks = NUM_BLOCKS;
 
         // Choose cut in block space (not bit space)
-        std::uniform_int_distribution<unsigned> block_cut_dist(1, num_blocks - 1);
+        std::uniform_int_distribution<unsigned> block_cut_dist(1,
+                                                               num_blocks - 1);
         unsigned block_cut = block_cut_dist(rng);
 
         // Convert block cut to bit index
@@ -557,7 +565,9 @@ class DeceptiveRoyalRoadDQNAgent : public Agent<int, DeceptiveRoyalRoadRLGA> {
         optimizer.step();
     }
 
-    void post_step() override { update(); }
+    void post_step() override {
+        update();
+    }
 };
 
 static double best_fitness_of(DeceptiveRoyalRoadDQNAgent& agent) {
@@ -574,15 +584,19 @@ static double best_fitness_of(DeceptiveRoyalRoadDQNAgent& agent) {
 // main_rlga — single-threaded DQN over episodes
 // ============================================================
 
-double get_param(const std::map<std::string, std::string>& params, const std::string& key, double def) {
+double get_param(const std::map<std::string, std::string>& params,
+                 const std::string& key, double def) {
     auto it = params.find(key);
-    if (it != params.end()) return std::stod(it->second);
+    if (it != params.end())
+        return std::stod(it->second);
     return def;
 }
 
-int get_param(const std::map<std::string, std::string>& params, const std::string& key, int def) {
+int get_param(const std::map<std::string, std::string>& params,
+              const std::string& key, int def) {
     auto it = params.find(key);
-    if (it != params.end()) return std::stoi(it->second);
+    if (it != params.end())
+        return std::stoi(it->second);
     return def;
 }
 
@@ -599,22 +613,27 @@ int main_rlga(const std::map<std::string, std::string>& params) {
     double lr = get_param(params, "lr", 0.001);
     size_t batch_size = get_param(params, "batch_size", 128);
     size_t memory_size = get_param(params, "memory_size", 10000);
-    unsigned genome_length = static_cast<unsigned>(get_param(params, "GENOME_LENGTH", 128));
-    unsigned block_size = static_cast<unsigned>(get_param(params, "BLOCK_SIZE", 8));
+    unsigned genome_length =
+        static_cast<unsigned>(get_param(params, "GENOME_LENGTH", 128));
+    unsigned block_size =
+        static_cast<unsigned>(get_param(params, "BLOCK_SIZE", 8));
 
     std::vector<double> custom_mut_rates;
     if (params.count("mut_rates")) {
         std::istringstream iss(params.at("mut_rates"));
         double m;
-        while (iss >> m) custom_mut_rates.push_back(m);
+        while (iss >> m)
+            custom_mut_rates.push_back(m);
     }
     init_action_space(custom_mut_rates);
 
     std::cout << "Using device: "
               << (torch::cuda::is_available() ? "CUDA" : "CPU") << "\n";
-    std::cout << "Deceptive Royal Road Problem (" << genome_length << " bits | Block Size: " << block_size << ")\n\n";
+    std::cout << "Deceptive Royal Road Problem (" << genome_length
+              << " bits | Block Size: " << block_size << ")\n\n";
 
-    DeceptiveRoyalRoadRLGA ga(pop_size, mut_rate, seed, genome_length, block_size);
+    DeceptiveRoyalRoadRLGA ga(pop_size, mut_rate, seed, genome_length,
+                              block_size);
     DeceptiveRoyalRoadDQNAgent agent(std::move(ga), gen_per_ep, n_ep, gamma,
                                      epsilon, epsilon_decay, epsilon_min, lr,
                                      batch_size, memory_size, seed);
@@ -645,8 +664,7 @@ int main_rlga(const std::map<std::string, std::string>& params) {
 
         total_gens += ep_gens;
         agent.sync_target();
-        agent.epsilon =
-            std::max(agent.epsilon_min, agent.epsilon * agent.epsilon_decay);
+        agent.decay_epsilon();
         agent.curr_ep++;
 
         std::cout << "Ep " << std::setw(3) << ep << " | gens=" << std::setw(4)
@@ -685,22 +703,27 @@ int main_par_rlga(const std::map<std::string, std::string>& params) {
     size_t batch_size = get_param(params, "batch_size", 128);
     size_t memory_size = get_param(params, "memory_size", 10000);
     unsigned n_migrants = get_param(params, "n_migrants", 500);
-    double migration_probability = get_param(params, "migration_probability", 0.5);
+    double migration_probability =
+        get_param(params, "migration_probability", 0.5);
     unsigned quorum = get_param(params, "quorum", 2);
-    unsigned genome_length = static_cast<unsigned>(get_param(params, "GENOME_LENGTH", 128));
-    unsigned block_size = static_cast<unsigned>(get_param(params, "BLOCK_SIZE", 8));
+    unsigned genome_length =
+        static_cast<unsigned>(get_param(params, "GENOME_LENGTH", 128));
+    unsigned block_size =
+        static_cast<unsigned>(get_param(params, "BLOCK_SIZE", 8));
 
     std::vector<double> custom_mut_rates;
     if (params.count("mut_rates")) {
         std::istringstream iss(params.at("mut_rates"));
         double m;
-        while (iss >> m) custom_mut_rates.push_back(m);
+        while (iss >> m)
+            custom_mut_rates.push_back(m);
     }
     init_action_space(custom_mut_rates);
 
     std::cout << "Using device: "
               << (torch::cuda::is_available() ? "CUDA" : "CPU") << "\n";
-    std::cout << "Deceptive Royal Road Problem (" << genome_length << " bits | Block Size: " << block_size << ")\n\n";
+    std::cout << "Deceptive Royal Road Problem (" << genome_length
+              << " bits | Block Size: " << block_size << ")\n\n";
 
     std::vector<unsigned> seeds;
     for (unsigned i = 0; i < n_threads; ++i)
@@ -709,13 +732,15 @@ int main_par_rlga(const std::map<std::string, std::string>& params) {
     std::vector<DeceptiveRoyalRoadDQNAgent> agents;
     agents.reserve(n_threads);
     for (unsigned i = 0; i < n_threads; ++i) {
-        DeceptiveRoyalRoadRLGA ga(pop_size, mut_rate, seeds[i], genome_length, block_size);
+        DeceptiveRoyalRoadRLGA ga(pop_size, mut_rate, seeds[i], genome_length,
+                                  block_size);
         ga.init_population();
         agents.emplace_back(std::move(ga), gen_per_ep, n_ep, gamma, epsilon,
                             epsilon_decay, epsilon_min, lr, batch_size,
                             memory_size, seeds[i]);
 
-        agents.back().epsilon_decay = epsilon_decay; // rescale to per-step for island model
+        agents.back().epsilon_decay =
+            epsilon_decay; // rescale to per-step for island model
     }
 
     RL_IslandModel<DeceptiveRoyalRoadDQNAgent> model(
@@ -749,7 +774,8 @@ int main_par_rlga(const std::map<std::string, std::string>& params) {
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " [rlga|par_rlga] [params.txt (optional)]\n";
+        std::cerr << "Usage: " << argv[0]
+                  << " [rlga|par_rlga] [params.txt (optional)]\n";
         return 1;
     }
 

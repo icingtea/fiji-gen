@@ -53,26 +53,65 @@ class RL_Island {
 
     void island_run() {
         bool counted = false;
-        while (true) {
-            island_step(!counted);
+        size_t n_ep = agent.n_ep;
+        size_t gen_per_ep = agent.gen_per_ep;
 
-            if (!counted &&
-                agent.ga.check_halt(agent.ga.population())) {
-                unsigned expected_done =
-                    done_counter.load(std::memory_order_relaxed);
-                while (expected_done < quorum) {
-                    if (done_counter.compare_exchange_weak(
-                            expected_done, expected_done + 1,
-                            std::memory_order_acq_rel,
-                            std::memory_order_relaxed)) {
-                        counted = true;
-                        break;
+        for (size_t ep = 0; ep < n_ep && !counted; ++ep) {
+            // Run one episode: gen_per_ep steps (generations)
+            for (size_t step = 0; step < gen_per_ep; ++step) {
+                // Check global halt before each step
+                if (done_counter.load(std::memory_order_relaxed) >= quorum) {
+                    return;
+                }
+
+                island_step(true);
+
+                // Epsilon decay happens inside agent.step() already.
+                // Check if this island reached the optimum
+                if (!counted &&
+                    agent.ga.check_halt(agent.ga.population())) {
+                    unsigned expected_done =
+                        done_counter.load(std::memory_order_relaxed);
+                    while (expected_done < quorum) {
+                        if (done_counter.compare_exchange_weak(
+                                expected_done, expected_done + 1,
+                                std::memory_order_acq_rel,
+                                std::memory_order_relaxed)) {
+                            counted = true;
+                            break;
+                        }
                     }
+                    if (counted) break;
                 }
             }
 
+            
+
+            // After each episode: sync target network + decay epsilon
+            agent.sync_target();
+            agent.decay_epsilon();
+            agent.curr_ep++;
+
+            // Drain migrant buffers between episodes
+            receive_migrants();
+
             if (done_counter.load(std::memory_order_relaxed) >= quorum) {
                 break;
+            }
+        }
+
+        // If this island finished all episodes without hitting quorum,
+        // still count it as done so the model can terminate.
+        if (!counted) {
+            unsigned expected_done =
+                done_counter.load(std::memory_order_relaxed);
+            while (expected_done < quorum) {
+                if (done_counter.compare_exchange_weak(
+                        expected_done, expected_done + 1,
+                        std::memory_order_acq_rel,
+                        std::memory_order_relaxed)) {
+                    break;
+                }
             }
         }
     }
@@ -83,6 +122,8 @@ class RL_Island {
     migrant_buffer<GAType>& self_migrant_buffer_;
     migrant_buffer<GAType>& neighbor_migrant_buffer_;
 
+    // island_step: perform one generation (step) on this island.
+    // Epsilon decay is handled inside agent.step().
     void island_step(bool active) {
         receive_migrants();
         if (active) {
@@ -95,12 +136,15 @@ class RL_Island {
                     double total_fit = 0.0;
                     for (const auto& ind : pop) total_fit += ind.fitness;
                     double avg_fit = total_fit / pop.size();
-                    std::cout << "[ Island " << id << " | gen " << agent.ga.generation 
-                              << " ] Best Fitness: " << best_it->fitness 
-                              << " | Avg Fitness: " << avg_fit << "\n";
+                    std::cout << "[ Island " << id
+                              << " | ep " << agent.curr_ep
+                              << " | gen " << agent.ga.generation
+                              << " ] Best: " << best_it->fitness
+                              << " | Avg: " << avg_fit
+                              << " | eps: " << agent.epsilon << "\n";
                 }
             }
-            agent.step();
+            agent.step();   // selects action, runs GA step, decays epsilon
             send_migrants();
         }
     }
