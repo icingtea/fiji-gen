@@ -1,0 +1,17 @@
+{
+  "problem": {
+    "GENOME_LENGTH": 100,
+    "JUMP_SIZE": 4
+  },
+  "genetic_algorithm": {
+    "pop_size": 10000,
+    "mut_rate": 0.01,
+    "selection_rate": 0.5
+  },
+  "parallel": {
+    "n_threads": 4,
+    "n_migrants": 500,
+    "migration_probability": 0.5,
+    "quorum": 2
+  }
+}
