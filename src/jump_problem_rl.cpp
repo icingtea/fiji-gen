@@ -19,6 +19,7 @@
 #include <span>
 #include <string>
 #include <vector>
+#include <map>
 
 #include <chrono>
 #include <fstream>
@@ -77,7 +78,7 @@ void init_action_space(const std::vector<double>& custom_mut_rates,
     N_ACTIONS = static_cast<int>(ACTION_SPACE.size());
 }
 
-static const int STATE_DIM = 2; // [avg_fitness, entropy]
+static const int STATE_DIM = 4; // [avg_fitness, entropy, std_deviation, mode_fitness]
 
 // ============================================================
 // DQNNet
@@ -333,7 +334,7 @@ class JumpRLGA : public RLGA<std::vector<uint8_t>, int> {
         return new_best - old_best;
     }
 
-    // DQN state: [normalised_avg_fitness, entropy]
+    // DQN state: [normalised_avg_fitness, entropy, norm_std_dev, norm_mode]
     torch::Tensor get_dqn_state() const {
         if (population_.empty())
             return torch::zeros({STATE_DIM});
@@ -345,6 +346,27 @@ class JumpRLGA : public RLGA<std::vector<uint8_t>, int> {
         double avg_fit = total_fit / static_cast<double>(population_.size());
         double norm_avg = std::clamp(avg_fit / MAX_FITNESS, 0.0, 1.0);
 
+        // Standard Deviation and Mode Fitness
+        double variance_sum = 0.0;
+        std::map<int, int> frequencies;
+        for (const auto& ind : population_) {
+            double diff = ind.fitness - avg_fit;
+            variance_sum += diff * diff;
+            frequencies[static_cast<int>(ind.fitness)]++;
+        }
+        double std_dev = std::sqrt(variance_sum / population_.size());
+        double norm_std_dev = std::clamp(std_dev / MAX_FITNESS, 0.0, 1.0);
+
+        int mode_val = 0;
+        int max_freq = -1;
+        for (const auto& [val, freq] : frequencies) {
+            if (freq > max_freq) {
+                max_freq = freq;
+                mode_val = val;
+            }
+        }
+        double norm_mode = std::clamp(static_cast<double>(mode_val) / MAX_FITNESS, 0.0, 1.0);
+
         // Entropy
         double sum_sq = total_fit + 1e-8;
         double entropy = 0.0;
@@ -354,7 +376,7 @@ class JumpRLGA : public RLGA<std::vector<uint8_t>, int> {
                 entropy -= p * std::log(p + 1e-8);
         }
 
-        return torch::tensor({(float)norm_avg, (float)entropy});
+        return torch::tensor({(float)norm_avg, (float)entropy, (float)norm_std_dev, (float)norm_mode});
     }
 };
 
