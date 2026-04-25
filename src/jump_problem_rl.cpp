@@ -642,15 +642,15 @@ json main_rlga(const json& params) {
                         .count();
 
     json result;
-    result["mode"]             = "rlga";
-    result["time_ms"]          = duration;
-    result["genome_length"]    = genome_length;
-    result["jump_size"]        = jump_size;
-    result["pop_size"]         = pop_size;
+    result["mode"] = "rlga";
+    result["time_ms"] = duration;
+    result["genome_length"] = genome_length;
+    result["jump_size"] = jump_size;
+    result["pop_size"] = pop_size;
     result["total_generations"] = total_gens;
-    result["episodes_run"]     = overall_solved ? solved_ep + 1 : n_ep;
-    result["best_fitness"]     = best_fitness_of(agent);
-    result["solved"]           = overall_solved;
+    result["episodes_run"] = overall_solved ? solved_ep + 1 : n_ep;
+    result["best_fitness"] = best_fitness_of(agent);
+    result["solved"] = overall_solved;
 
     return result;
 }
@@ -792,15 +792,15 @@ json main_par_rlga(const json& params) {
     }
 
     json result;
-    result["mode"]                 = "par_rlga";
-    result["time_ms"]              = duration;
-    result["genome_length"]        = genome_length;
-    result["jump_size"]            = jump_size;
-    result["island_pop"]           = pop_size;
-    result["n_migrants"]           = n_migrants;
-    result["n_threads"]            = n_threads;
+    result["mode"] = "par_rlga";
+    result["time_ms"] = duration;
+    result["genome_length"] = genome_length;
+    result["jump_size"] = jump_size;
+    result["island_pop"] = pop_size;
+    result["n_migrants"] = n_migrants;
+    result["n_threads"] = n_threads;
     result["overall_best_fitness"] = overall_best;
-    result["solved_count"]         = solved_count;
+    result["solved_count"] = solved_count;
     if (solved_count > 0) {
         result["min_gens_solved"] = min_gens_solved;
     }

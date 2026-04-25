@@ -60,7 +60,7 @@ def get_par_variant(r, total_pop):
 def get_mig_pct(r):
     island_pop = r.get("island_pop", r.get("pop_size", 0))
     n_mig = r.get("n_migrants", 0)
-    return n_mig / island_pop if island_pop > 0 else 0.0
+    return round(n_mig / island_pop, 2) if island_pop > 0 else 0.0
 
 
 def get_generations(r):
@@ -222,7 +222,7 @@ def main():
 
     thread_counts = sorted({r["n_threads"] for r in records if "n_threads" in r})
     mig_pcts = sorted({
-        round(get_mig_pct(r), 4)
+        get_mig_pct(r)
         for r in records
         if r["mode"] in ("par", "par_rlga") and "n_migrants" in r
     })
