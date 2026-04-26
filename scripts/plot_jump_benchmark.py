@@ -10,11 +10,10 @@ Usage:
 One PNG per distinct n_threads value found in the data.
 Layout per PNG:
     rows  = migrant percentages (one row per unique mig%)
-    cols  = Runtime (candlestick) | Generations (candlestick) | Solve Rate (bar)
-X-axis:
-    seq | par(sum) | par(per) | rlga | par_rlga(sum) | par_rlga(per)
+    cols  = Runtime (candlestick) | Generations (candlestick)
 
 Output: data/plots/<stem>/threads_<N>.png
+Output: data/plots/<stem>/threads_<N>_par_only.png
 """
 
 import json
@@ -24,8 +23,6 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-
-X_LABELS = ["seq", "par\n(sum)", "par\n(per)", "rlga", "par_rlga\n(sum)", "par_rlga\n(per)"]
 
 # ── data loading ──────────────────────────────────────────────────────────────
 
@@ -85,7 +82,7 @@ def record_is_solved(r):
 
 # ── drawing ───────────────────────────────────────────────────────────────────
 
-def draw_candlesticks(ax, groups, ylabel):
+def draw_candlesticks(ax, groups, ylabel, x_labels):
     """
     groups: list of [values]  — one per x slot
     Candlestick: whisker = min/max, box = IQR, line = median
@@ -107,52 +104,35 @@ def draw_candlesticks(ax, groups, ylabel):
         # Median
         ax.plot([i - 0.25, i + 0.25], [med, med], color="black", linewidth=2)
 
-    ax.set_xticks(range(len(X_LABELS)))
-    ax.set_xticklabels(X_LABELS, fontsize=8)
+    ax.set_xticks(range(len(x_labels)))
+    ax.set_xticklabels(x_labels, fontsize=8)
     ax.set_ylabel(ylabel, fontsize=9)
     ax.yaxis.grid(True, linestyle="--", alpha=0.5)
 
 
-def draw_solve_bars(ax, groups_recs):
-    """groups_recs: list of [records] — one per x slot"""
-    rates = []
-    for recs in groups_recs:
-        if not recs:
-            rates.append(0.0)
-        else:
-            rates.append(sum(record_is_solved(r) for r in recs) / len(recs) * 100)
-
-    ax.bar(range(len(X_LABELS)), rates,
-           color="steelblue", edgecolor="black", linewidth=0.8, alpha=0.85, width=0.5)
-    ax.set_xticks(range(len(X_LABELS)))
-    ax.set_xticklabels(X_LABELS, fontsize=8)
-    ax.set_ylim(0, 115)
-    ax.set_ylabel("Solve Rate (%)", fontsize=9)
-    ax.yaxis.grid(True, linestyle="--", alpha=0.5)
-    for i, rate in enumerate(rates):
-        if rate > 0:
-            ax.text(i, rate + 1.5, f"{rate:.0f}%", ha="center", va="bottom", fontsize=8)
-
-
 # ── per-threads figure ────────────────────────────────────────────────────────
 
-def make_plot_for_threads(records, n_threads, total_pop, mig_pcts, out_dir, stem):
+def make_plot_for_threads(records, n_threads, total_pop, mig_pcts, out_dir, stem, par_only=False):
     seq_recs      = [r for r in records if r["mode"] == "seq"]
     rlga_recs     = [r for r in records if r["mode"] == "rlga"]
     par_all       = [r for r in records if r["mode"] == "par"      and r.get("n_threads") == n_threads]
     par_rlga_all  = [r for r in records if r["mode"] == "par_rlga" and r.get("n_threads") == n_threads]
 
     n_rows = len(mig_pcts)
-    fig, axes = plt.subplots(n_rows, 3,
-                             figsize=(15, n_rows * 3.5),
+    fig, axes = plt.subplots(n_rows, 2,
+                             figsize=(10, n_rows * 3.5),
                              squeeze=False)
-    fig.suptitle(f"{stem}  —  {n_threads} island{'s' if n_threads > 1 else ''}",
-                 fontsize=13)
+    
+    if par_only:
+        fig.suptitle(f"{stem}  —  {n_threads} island{'s' if n_threads > 1 else ''} (Parallel Only)", fontsize=13)
+        x_labels = ["par\n(sum)", "par\n(per)", "par_rlga\n(sum)", "par_rlga\n(per)"]
+    else:
+        fig.suptitle(f"{stem}  —  {n_threads} island{'s' if n_threads > 1 else ''}", fontsize=13)
+        x_labels = ["seq", "par\n(sum)", "par\n(per)", "rlga", "par_rlga\n(sum)", "par_rlga\n(per)"]
 
     # Column headers on first row only
     axes[0][0].set_title("Runtime (ms)", fontsize=11)
     axes[0][1].set_title("Generations to Best", fontsize=11)
-    axes[0][2].set_title("Solve Rate (%)", fontsize=11)
 
     for row_i, mig_pct in enumerate(mig_pcts):
         pct_label = f"migrants = {int(round(mig_pct * 100))}%"
@@ -165,22 +145,21 @@ def make_plot_for_threads(records, n_threads, total_pop, mig_pcts, out_dir, stem
         prl_sum  = [r for r in filt(par_rlga_all) if get_par_variant(r, total_pop) == "sum"]
         prl_per  = [r for r in filt(par_rlga_all) if get_par_variant(r, total_pop) == "per"]
 
-        # Slot order matches X_LABELS
-        slot_recs = [seq_recs, par_sum, par_per, rlga_recs, prl_sum, prl_per]
+        if par_only:
+            slot_recs = [par_sum, par_per, prl_sum, prl_per]
+        else:
+            slot_recs = [seq_recs, par_sum, par_per, rlga_recs, prl_sum, prl_per]
 
         # ── Runtime ─────────────────────────────────────────────────────────
         rt_groups = [[r["time_ms"] for r in recs] for recs in slot_recs]
-        draw_candlesticks(axes[row_i][0], rt_groups, "ms")
+        draw_candlesticks(axes[row_i][0], rt_groups, "ms", x_labels)
 
         # ── Generations ──────────────────────────────────────────────────────
         gen_groups = [
             [v for r in recs if (v := get_generations(r)) is not None]
             for recs in slot_recs
         ]
-        draw_candlesticks(axes[row_i][1], gen_groups, "generations")
-
-        # ── Solve rate ───────────────────────────────────────────────────────
-        draw_solve_bars(axes[row_i][2], slot_recs)
+        draw_candlesticks(axes[row_i][1], gen_groups, "generations", x_labels)
 
         # Annotate the row on the left edge
         axes[row_i][0].set_ylabel(f"{pct_label}\n\nms", fontsize=9)
@@ -197,12 +176,47 @@ def make_plot_for_threads(records, n_threads, total_pop, mig_pcts, out_dir, stem
         )
 
     fig.tight_layout(rect=[0.05, 0, 1, 0.97])
-    out_path = os.path.join(out_dir, f"threads_{n_threads}.png")
+    suffix = "_par_only" if par_only else ""
+    out_path = os.path.join(out_dir, f"threads_{n_threads}{suffix}.png")
     os.makedirs(out_dir, exist_ok=True)
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"  saved: {out_path}")
 
+# ── stats table ───────────────────────────────────────────────────────────────
+
+def print_stats_table(records, total_pop):
+    print("\n" + "="*84)
+    print(f"{'Mode':<15} | {'Threads':<7} | {'MigPct':<6} | {'Var':<3} | {'Runtime (ms) (Median)':<21} | {'Generations (Median)':<20} | {'Solve %':<7}")
+    print("-" * 84)
+    
+    from collections import defaultdict
+    groups = defaultdict(list)
+    for r in records:
+        mode = r["mode"]
+        n_threads = r.get("n_threads", 0)
+        mig_pct = get_mig_pct(r) if mode.startswith("par") else 0.0
+        var = get_par_variant(r, total_pop) if mode.startswith("par") else "N/A"
+        groups[(mode, n_threads, mig_pct, var)].append(r)
+        
+    for k in sorted(groups.keys()):
+        mode, n_threads, mig_pct, var = k
+        recs = groups[k]
+        
+        rts = [r["time_ms"] for r in recs]
+        gens = [v for r in recs if (v := get_generations(r)) is not None]
+        solves = [record_is_solved(r) for r in recs]
+        
+        med_rt = np.median(rts) if rts else 0.0
+        med_gen = np.median(gens) if gens else 0.0
+        solve_pct = sum(solves) / len(solves) * 100 if solves else 0.0
+        
+        th_str = str(n_threads) if mode.startswith("par") else "N/A"
+        mig_str = f"{mig_pct*100:.0f}%" if mode.startswith("par") else "N/A"
+        
+        print(f"{mode:<15} | {th_str:<7} | {mig_str:<6} | {var:<3} | {med_rt:>21.2f} | {med_gen:>20.1f} | {solve_pct:>6.1f}%")
+        
+    print("="*84 + "\n")
 
 # ── entry point ───────────────────────────────────────────────────────────────
 
@@ -230,10 +244,14 @@ def main():
     print(f"  Thread counts : {thread_counts}")
     print(f"  Migrant pcts  : {[f'{p*100:.0f}%' for p in mig_pcts]}")
     print(f"  Output dir    : {out_dir}/\n")
+    
+    print_stats_table(records, total_pop)
 
     for th in thread_counts:
         print(f"Generating: threads_{th}.png ...")
         make_plot_for_threads(records, th, total_pop, mig_pcts, out_dir, stem)
+        print(f"Generating: threads_{th}_par_only.png ...")
+        make_plot_for_threads(records, th, total_pop, mig_pcts, out_dir, stem, par_only=True)
 
     print("Done.")
 
